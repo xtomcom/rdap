@@ -93,36 +93,30 @@ rdap --timeout 60 example.com
 ### Domain Query
 
 ```bash
-$ rdap -v example.com
+$ rdap example.com
 
-→ Query: example.com
-→ Type:  domain
-
-⟳ Querying RDAP server...
-
-═══ DOMAIN ═══
 Domain Name: EXAMPLE.COM
 Handle: 2336799_DOMAIN_COM-VRSN
+Object Class: domain
+Status: client delete prohibited
+Status: client transfer prohibited
+Status: client update prohibited
+Nameserver: A.IANA-SERVERS.NET
+Nameserver: B.IANA-SERVERS.NET
+Delegation Signed: yes
+DS Key Tag: 370
+DS Algorithm: 13
+DS Digest Type: 2
+DS Digest: BE74359954660069D5C63D200C39F5603827D7DD02B56F120EE9F3A86764247C
+Registration: 1995-08-14T04:00:00Z
+Expiration: 2026-08-13T04:00:00Z
+Last Changed: 2025-08-14T07:01:39Z
+Last Update: 2025-11-04T20:54:25Z
 
-Status:
-  • client delete prohibited
-  • client transfer prohibited
-  • client update prohibited
-
-Nameservers:
-  • A.IANA-SERVERS.NET
-  • B.IANA-SERVERS.NET
-
-DNSSEC: Signed ✓
-
-Events:
-┌──────────────────┬─────────────────────────┐
-│ Action           │ Date                    │
-├──────────────────┼─────────────────────────┤
-│ Registration     │ 1995-08-14T04:00:00Z   │
-│ Expiration       │ 2024-08-13T04:00:00Z   │
-│ Last Changed     │ 2023-08-14T07:01:38Z   │
-└──────────────────┴─────────────────────────┘
+Entity Handle: 376
+Role: registrar
+Name: RESERVED-Internet Assigned Numbers Authority
+IANA Registrar ID: 376
 ```
 
 ### IP Query
@@ -130,49 +124,470 @@ Events:
 ```bash
 $ rdap 8.8.8.8
 
-═══ IP NETWORK ═══
-Name: LVLT-GOGL-8-8-8
-Handle: NET-8-8-8-0-1
-Range: 8.8.8.0 - 8.8.8.255
-Version: IPv4
-Type: ALLOCATION
-Country: US
+Handle: NET-8-8-8-0-2
+Start Address: 8.8.8.0
+End Address: 8.8.8.255
+IP Version: v4
+Name: GOGL
+Type: DIRECT ALLOCATION
+Parent Handle: NET-8-0-0-0-0
+Status: active
+Port43: whois.arin.net
+last changed: 2023-12-28T17:24:56-05:00
+registration: 2023-12-28T17:24:33-05:00
 
-Status:
-  • active
+Entity Handle: GOGL
+Role: registrant
+Name: Google LLC
+Port43: whois.arin.net
+last changed: 2019-10-31T15:45:45-04:00
+registration: 2000-03-30T00:00:00-05:00
 ```
 
 ### AS Number Query
 
 ```bash
-$ rdap AS15169
+$ rdap AS213605
 
-═══ AUTNUM ═══
-AS Number: AS15169
-Name: GOOGLE
-Type: Direct Allocation
-Country: US
+AS Number: AS213605
+Name: Pysio-Research-NetWork
+Handle: AS213605
+Object Class: autnum
+Status: active
+Port43: whois.ripe.net
+Registration: 2025-01-10T12:53:39Z
+Last Changed: 2025-10-14T13:21:47Z
+
+Entity Handle: LA9082-RIPE
+Role: administrative
+Role: technical
+Role: abuse
+Name: LiuHaoRan
+Email: team@pysio.online
+Phone: +86 19934273163
+Link: https://rdap.db.ripe.net/entity/LA9082-RIPE
+```
+
+### Entity Query
+
+```bash
+$ rdap -s https://rdap.db.ripe.net -t entity LA9082-RIPE
+
+Entity Handle: LA9082-RIPE
+Role: administrative
+Role: technical
+Role: abuse
+Name: LiuHaoRan
+Email: team@pysio.online
+Phone: +86 19934273163
+Port43: whois.ripe.net
+registration: 2020-01-15T10:30:00Z
+last changed: 2025-01-06T08:29:19Z
+Link: https://rdap.db.ripe.net/entity/LA9082-RIPE
+```
+
+### Verbose Output
+
+```bash
+$ rdap -v AS213605
+
+→ Query: AS213605
+→ Type:  autnum
+
+⟳ Querying RDAP server...
+
+AS Number: AS213605
+Name: Pysio-Research-NetWork
+Handle: AS213605
+Object Class: autnum
+Status: active
+Port43: whois.ripe.net
+Registration: 2025-01-10T12:53:39Z
+Last Changed: 2025-10-14T13:21:47Z
+
+Entity Handle: LA9082-RIPE
+Role: administrative
+Role: technical
+Role: abuse
+Name: LiuHaoRan
+Email: team@pysio.online
+Phone: +86 19934273163
+Link: https://rdap.db.ripe.net/entity/LA9082-RIPE
+Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
+
+Notice: Filtered
+  This output has been filtered.
+Notice: Source
+  Objects returned came from source
+  RIPE
+Notice: Terms and Conditions
+  This is the RIPE Database query service. The objects are in RDAP format.
+  Link: http://www.ripe.net/db/support/db-terms-conditions.pdf
 ```
 
 ## Library Usage
 
-You can also use this as a Rust library:
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+rdap = { git = "https://github.com/Akaere-NetWorks/rdap.git" }
+tokio = { version = "1.35", features = ["full"] }
+```
+
+Or use a specific version/branch:
+
+```toml
+[dependencies]
+# Use main branch
+rdap = { git = "https://github.com/Akaere-NetWorks/rdap.git", branch = "main" }
+
+# Or use a specific tag (when available)
+# rdap = { git = "https://github.com/Akaere-NetWorks/rdap.git", tag = "v0.1.0" }
+
+# Or use a specific commit
+# rdap = { git = "https://github.com/Akaere-NetWorks/rdap.git", rev = "abc123" }
+
+tokio = { version = "1.35", features = ["full"] }
+```
+
+### Basic Query
 
 ```rust
 use rdap::{RdapClient, RdapRequest, QueryType};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a client
     let client = RdapClient::new()?;
+    
+    // Query a domain
+    let request = RdapRequest::new(QueryType::Domain, "example.com");
+    let result = client.query(&request).await?;
+    
+    // Display with colored output
+    use rdap::display::RdapDisplay;
+    result.display(false); // false = non-verbose
+    
+    Ok(())
+}
+```
+
+### Auto-Detection
+
+```rust
+use rdap::{RdapClient, RdapRequest};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    
+    // Auto-detect query type
+    let query = "8.8.8.8";
+    let query_type = RdapRequest::detect_type(query)?;
+    
+    let request = RdapRequest::new(query_type, query);
+    let result = client.query(&request).await?;
+    
+    // Process the result based on type
+    match result {
+        rdap::RdapObject::Domain(domain) => {
+            println!("Domain: {}", domain.ldh_name.unwrap_or_default());
+        }
+        rdap::RdapObject::IpNetwork(ip) => {
+            println!("IP Network: {}", ip.name.unwrap_or_default());
+        }
+        rdap::RdapObject::Autnum(asn) => {
+            println!("AS Number: AS{}", asn.start_autnum.unwrap_or(0));
+        }
+        _ => {}
+    }
+    
+    Ok(())
+}
+```
+
+### Custom Server
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType};
+use url::Url;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    
+    // Use a specific RDAP server
+    let server = Url::parse("https://rdap.verisign.com/com/v1")?;
+    let request = RdapRequest::new(QueryType::Domain, "example.com")
+        .with_server(server);
+    
+    let result = client.query(&request).await?;
+    
+    Ok(())
+}
+```
+
+### JSON Output
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType};
+use serde_json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    let request = RdapRequest::new(QueryType::Domain, "example.com");
+    let result = client.query(&request).await?;
+    
+    // Serialize to JSON
+    let json = serde_json::to_string_pretty(&result)?;
+    println!("{}", json);
+    
+    Ok(())
+}
+```
+
+### Working with Domain Data
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType, RdapObject};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    let request = RdapRequest::new(QueryType::Domain, "example.com");
+    let result = client.query(&request).await?;
+    
+    if let RdapObject::Domain(domain) = result {
+        // Access domain properties
+        println!("Domain: {}", domain.ldh_name.unwrap_or_default());
+        
+        // Check status
+        for status in &domain.status {
+            println!("Status: {}", status);
+        }
+        
+        // List nameservers
+        for ns in &domain.nameservers {
+            if let Some(name) = &ns.ldh_name {
+                println!("Nameserver: {}", name);
+            }
+        }
+        
+        // Check DNSSEC
+        if let Some(dnssec) = &domain.secure_dns {
+            if let Some(signed) = dnssec.delegation_signed {
+                println!("DNSSEC: {}", if signed { "Signed" } else { "Not signed" });
+            }
+        }
+        
+        // Access entities (registrar, registrant, etc.)
+        for entity in &domain.entities {
+            if let Some(handle) = &entity.handle {
+                println!("Entity: {} (roles: {:?})", handle, entity.roles);
+            }
+            
+            // Access vCard data
+            if let Some(vcard) = &entity.vcard {
+                if let Some(name) = vcard.name() {
+                    println!("  Name: {}", name);
+                }
+                if let Some(email) = vcard.email() {
+                    println!("  Email: {}", email);
+                }
+            }
+        }
+        
+        // Access events
+        for event in &domain.events {
+            println!("Event: {} at {}", event.action, event.date);
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Working with IP Network Data
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType, RdapObject};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    let request = RdapRequest::new(QueryType::Ip, "8.8.8.8");
+    let result = client.query(&request).await?;
+    
+    if let RdapObject::IpNetwork(network) = result {
+        println!("Network: {}", network.name.unwrap_or_default());
+        println!("Range: {} - {}", 
+            network.start_address.unwrap_or_default(),
+            network.end_address.unwrap_or_default()
+        );
+        println!("Type: {}", network.network_type.unwrap_or_default());
+        
+        if let Some(country) = &network.country {
+            println!("Country: {}", country);
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Working with AS Number Data
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType, RdapObject};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    let request = RdapRequest::new(QueryType::Autnum, "AS15169");
+    let result = client.query(&request).await?;
+    
+    if let RdapObject::Autnum(asn) = result {
+        if let Some(start) = asn.start_autnum {
+            println!("AS Number: AS{}", start);
+        }
+        println!("Name: {}", asn.name.unwrap_or_default());
+        println!("Type: {}", asn.as_type.unwrap_or_default());
+        
+        if let Some(country) = &asn.country {
+            println!("Country: {}", country);
+        }
+    }
+    
+    Ok(())
+}
+```
+
+### Error Handling
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType, RdapObject, RdapError};
+
+#[tokio::main]
+async fn main() {
+    let client = RdapClient::new().unwrap();
+    let request = RdapRequest::new(QueryType::Domain, "example.com");
+    
+    match client.query(&request).await {
+        Ok(result) => {
+            // Handle successful response
+            match result {
+                RdapObject::Error(err) => {
+                    eprintln!("RDAP Error: {}", err.title.unwrap_or_default());
+                    for desc in &err.description {
+                        eprintln!("  {}", desc);
+                    }
+                }
+                _ => {
+                    use rdap::display::RdapDisplay;
+                    result.display(false);
+                }
+            }
+        }
+        Err(e) => {
+            match e {
+                RdapError::Bootstrap(msg) => {
+                    eprintln!("Bootstrap error: {}", msg);
+                }
+                RdapError::Http(err) => {
+                    eprintln!("HTTP error: {}", err);
+                }
+                RdapError::InvalidQuery(msg) => {
+                    eprintln!("Invalid query: {}", msg);
+                }
+                _ => {
+                    eprintln!("Error: {}", e);
+                }
+            }
+        }
+    }
+}
+```
+
+### Advanced: Custom Timeout and Configuration
+
+```rust
+use rdap::{RdapClient, RdapRequest, QueryType};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create client with custom timeout
+    let client = RdapClient::new()?
+        .with_timeout(Duration::from_secs(30));
     
     let request = RdapRequest::new(QueryType::Domain, "example.com");
     let result = client.query(&request).await?;
     
-    // Display with colors
-    use rdap::display::RdapDisplay;
-    result.display(false);
-    
     Ok(())
+}
+```
+
+### Integration Example: Web Service
+
+Here's an example of using the RDAP library in a web service:
+
+```rust
+use axum::{
+    extract::Path,
+    http::StatusCode,
+    response::Json,
+    routing::get,
+    Router,
+};
+use rdap::{RdapClient, RdapRequest};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+// Shared RDAP client
+struct AppState {
+    rdap_client: Arc<Mutex<RdapClient>>,
+}
+
+#[tokio::main]
+async fn main() {
+    let client = RdapClient::new().unwrap();
+    let state = Arc::new(AppState {
+        rdap_client: Arc::new(Mutex::new(client)),
+    });
+
+    let app = Router::new()
+        .route("/rdap/:query", get(query_handler))
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .unwrap();
+    
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn query_handler(
+    Path(query): Path<String>,
+    state: axum::extract::State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let client = state.rdap_client.lock().await;
+    
+    // Auto-detect query type
+    let query_type = RdapRequest::detect_type(&query)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    
+    let request = RdapRequest::new(query_type, &query);
+    
+    match client.query(&request).await {
+        Ok(result) => {
+            let json = serde_json::to_value(&result)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            Ok(Json(json))
+        }
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 ```
 
