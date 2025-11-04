@@ -156,10 +156,37 @@ impl BootstrapClient {
         Ok(vec![])
     }
     
-    /// Check if IP is in CIDR range (simplified)
-    fn ip_in_range(&self, _addr: &IpAddr, _cidr: &str) -> bool {
-        // TODO: Implement proper CIDR matching
-        // For now, just return false to trigger fallback
+    /// Check if IP is in CIDR range
+    fn ip_in_range(&self, addr: &IpAddr, cidr: &str) -> bool {
+        // Parse CIDR notation
+        if let Some(slash_pos) = cidr.find('/') {
+            let ip_part = &cidr[..slash_pos];
+            let prefix_len: u8 = cidr[slash_pos + 1..].parse().unwrap_or(0);
+            
+            if let Ok(network_addr) = ip_part.parse::<IpAddr>() {
+                return match (network_addr, addr) {
+                    (IpAddr::V4(net), IpAddr::V4(addr)) => {
+                        if prefix_len > 32 {
+                            return false;
+                        }
+                        let net_int = u32::from_be_bytes(net.octets());
+                        let addr_int = u32::from_be_bytes(addr.octets());
+                        let mask = if prefix_len == 0 { 0 } else { !0u32 << (32 - prefix_len) };
+                        (net_int & mask) == (addr_int & mask)
+                    }
+                    (IpAddr::V6(net), IpAddr::V6(addr)) => {
+                        if prefix_len > 128 {
+                            return false;
+                        }
+                        let net_int = u128::from_be_bytes(net.octets());
+                        let addr_int = u128::from_be_bytes(addr.octets());
+                        let mask = if prefix_len == 0 { 0 } else { !0u128 << (128 - prefix_len) };
+                        (net_int & mask) == (addr_int & mask)
+                    }
+                    _ => false, // IPv4 vs IPv6 mismatch
+                };
+            }
+        }
         false
     }
     
