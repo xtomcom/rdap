@@ -1,0 +1,51 @@
+[package]
+name = "rdap"
+version = "0.1.0"
+edition = "2024"
+authors = ["Akaere Networks"]
+description = "A modern RDAP (Registration Data Access Protocol) client"
+license = "MIT"
+
+[dependencies]
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1.35", features = ["full"] }
+
+# JSON serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive", "cargo"] }
+
+# Colors and formatting
+colored = "2.1"
+comfy-table = "7.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# URL handling
+url = "2.5"
+urlencoding = "2.1"
+
+# Logging
+env_logger = "0.11"
+log = "0.4"
+
+# Cache
+directories = "5.0"
+
+[dev-dependencies]
+mockito = "1.2"
+tempfile = "3.8"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
