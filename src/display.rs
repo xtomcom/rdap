@@ -357,7 +357,7 @@ impl RdapDisplayWithQuery for IpNetwork {
 
         if let Some(ip_ver) = &self.ip_version {
             let version = if ip_ver.starts_with('v') {
-                ip_ver.to_string()
+                ip_ver.clone()
             } else {
                 format!("v{ip_ver}")
             };
