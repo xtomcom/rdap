@@ -1,6 +1,6 @@
 //! Example: Basic domain query
 
-use rdap::{display::RdapDisplay, RdapClient, RdapRequest, QueryType};
+use rdap::{QueryType, RdapClient, RdapRequest, display::RdapDisplay};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

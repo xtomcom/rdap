@@ -15,8 +15,9 @@ env:
   APP_NAME: rdap
 
 jobs:
-  build-linux:
-    name: Build Linux (${{ matrix.arch }})
+  # Native builds for best performance on common platforms
+  build-linux-native:
+    name: Build Linux Native (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -41,6 +42,55 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          cp target/${{ matrix.target }}/release/${{ env.APP_NAME }} ${{ env.APP_NAME }}-${VERSION}-linux-${{ matrix.arch }}
+          chmod +x ${{ env.APP_NAME }}-${VERSION}-linux-${{ matrix.arch }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: ${{ env.APP_NAME }}-*-linux-${{ matrix.arch }}
+
+  # Cross-compiled builds for musl and additional architectures
+  build-linux-cross:
+    name: Build Linux Cross (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl static builds (Alpine, containers)
+          - arch: x86_64-musl
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64-musl
+            target: aarch64-unknown-linux-musl
+          # ARM 32-bit
+          - arch: armv7
+            target: armv7-unknown-linux-gnueabihf
+          - arch: armv7-musl
+            target: armv7-unknown-linux-musleabihf
+          # RISC-V
+          - arch: riscv64
+            target: riscv64gc-unknown-linux-gnu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cross build --release --target ${{ matrix.target }}
 
       - name: Prepare artifact
         run: |
@@ -134,7 +184,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build-linux, build-macos, build-windows]
+    needs: [build-linux-native, build-linux-cross, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

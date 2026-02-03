@@ -23,8 +23,10 @@ const BUILTIN_TLDS: &str = include_str!("../config/tlds.json");
 const BUILTIN_TLD_LIST: &str = include_str!("../config/tlds.txt");
 
 /// GitHub raw URLs for config updates
-pub const CONFIG_UPDATE_URL: &str = "https://raw.githubusercontent.com/xtomcom/rdap/main/config/config.json";
-pub const TLDS_UPDATE_URL: &str = "https://raw.githubusercontent.com/xtomcom/rdap/main/config/tlds.json";
+pub const CONFIG_UPDATE_URL: &str =
+    "https://raw.githubusercontent.com/xtomcom/rdap/main/config/config.json";
+pub const TLDS_UPDATE_URL: &str =
+    "https://raw.githubusercontent.com/xtomcom/rdap/main/config/tlds.json";
 pub const TLD_LIST_UPDATE_URL: &str = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt";
 
 /// IANA RDAP server for TLD queries
@@ -100,35 +102,32 @@ impl Config {
 
         // Try config.local.json first (user local overrides)
         let local_path = user_dir.join("config.local.json");
-        if local_path.exists() {
-            if let Ok(content) = fs::read_to_string(&local_path) {
-                if let Ok(config) = serde_json::from_str(&content) {
-                    log::debug!("Loaded config from {}", local_path.display());
-                    return Ok(config);
-                }
-            }
+        if local_path.exists()
+            && let Ok(content) = fs::read_to_string(&local_path)
+            && let Ok(config) = serde_json::from_str(&content)
+        {
+            log::debug!("Loaded config from {}", local_path.display());
+            return Ok(config);
         }
 
         // Try config.json in user dir (downloaded config)
         let user_path = user_dir.join("config.json");
-        if user_path.exists() {
-            if let Ok(content) = fs::read_to_string(&user_path) {
-                if let Ok(config) = serde_json::from_str(&content) {
-                    log::debug!("Loaded config from {}", user_path.display());
-                    return Ok(config);
-                }
-            }
+        if user_path.exists()
+            && let Ok(content) = fs::read_to_string(&user_path)
+            && let Ok(config) = serde_json::from_str(&content)
+        {
+            log::debug!("Loaded config from {}", user_path.display());
+            return Ok(config);
         }
 
         // Try system config
         let system_path = system_dir.join("config.json");
-        if system_path.exists() {
-            if let Ok(content) = fs::read_to_string(&system_path) {
-                if let Ok(config) = serde_json::from_str(&content) {
-                    log::debug!("Loaded config from {}", system_path.display());
-                    return Ok(config);
-                }
-            }
+        if system_path.exists()
+            && let Ok(content) = fs::read_to_string(&system_path)
+            && let Ok(config) = serde_json::from_str(&content)
+        {
+            log::debug!("Loaded config from {}", system_path.display());
+            return Ok(config);
         }
 
         // Fall back to built-in default
@@ -161,14 +160,17 @@ pub fn load_tld_overrides() -> Result<TldOverrides> {
 
     // Merge local overrides on top (tlds.local.json)
     let local_path = user_dir.join("tlds.local.json");
-    if local_path.exists() {
-        if let Ok(content) = fs::read_to_string(&local_path) {
-            if let Ok(local_overrides) = serde_json::from_str::<TldOverrides>(&content) {
-                log::debug!("Merging {} local TLD overrides from {}", local_overrides.len(), local_path.display());
-                for (k, v) in local_overrides {
-                    overrides.insert(k, v);
-                }
-            }
+    if local_path.exists()
+        && let Ok(content) = fs::read_to_string(&local_path)
+        && let Ok(local_overrides) = serde_json::from_str::<TldOverrides>(&content)
+    {
+        log::debug!(
+            "Merging {} local TLD overrides from {}",
+            local_overrides.len(),
+            local_path.display()
+        );
+        for (k, v) in local_overrides {
+            overrides.insert(k, v);
         }
     }
 
@@ -176,27 +178,28 @@ pub fn load_tld_overrides() -> Result<TldOverrides> {
 }
 
 /// Load base TLD overrides (without local merge)
-fn load_base_tld_overrides(user_dir: &PathBuf, system_dir: &PathBuf) -> Result<TldOverrides> {
+fn load_base_tld_overrides(
+    user_dir: &std::path::Path,
+    system_dir: &std::path::Path,
+) -> Result<TldOverrides> {
     // Try user config (downloaded)
     let user_path = user_dir.join("tlds.json");
-    if user_path.exists() {
-        if let Ok(content) = fs::read_to_string(&user_path) {
-            if let Ok(overrides) = serde_json::from_str(&content) {
-                log::debug!("Loaded TLD overrides from {}", user_path.display());
-                return Ok(overrides);
-            }
-        }
+    if user_path.exists()
+        && let Ok(content) = fs::read_to_string(&user_path)
+        && let Ok(overrides) = serde_json::from_str(&content)
+    {
+        log::debug!("Loaded TLD overrides from {}", user_path.display());
+        return Ok(overrides);
     }
 
     // Try system config
     let system_path = system_dir.join("tlds.json");
-    if system_path.exists() {
-        if let Ok(content) = fs::read_to_string(&system_path) {
-            if let Ok(overrides) = serde_json::from_str(&content) {
-                log::debug!("Loaded TLD overrides from {}", system_path.display());
-                return Ok(overrides);
-            }
-        }
+    if system_path.exists()
+        && let Ok(content) = fs::read_to_string(&system_path)
+        && let Ok(overrides) = serde_json::from_str(&content)
+    {
+        log::debug!("Loaded TLD overrides from {}", system_path.display());
+        return Ok(overrides);
     }
 
     // Fall back to built-in default
@@ -226,10 +229,10 @@ pub fn lookup_tld_override(overrides: &TldOverrides, domain: &str) -> Option<Url
     // e.g., for "foo.com.af", try "foo.com.af", "com.af", "af"
     for i in 0..parts.len() {
         let suffix = parts[i..].join(".");
-        if let Some(url_str) = overrides.get(&suffix) {
-            if let Ok(url) = Url::parse(url_str) {
-                return Some(url);
-            }
+        if let Some(url_str) = overrides.get(&suffix)
+            && let Ok(url) = Url::parse(url_str)
+        {
+            return Some(url);
         }
     }
 
@@ -297,7 +300,8 @@ pub async fn update_configs() -> Result<UpdateResult> {
             match response.text().await {
                 Ok(content) => {
                     // Validate content (should have lines starting with letters)
-                    let has_valid_tlds = content.lines()
+                    let has_valid_tlds = content
+                        .lines()
                         .filter(|l| !l.starts_with('#') && !l.is_empty())
                         .take(5)
                         .all(|l| l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
@@ -344,20 +348,20 @@ impl TldList {
 
         // Try user config
         let user_path = user_dir.join("tlds.txt");
-        if user_path.exists() {
-            if let Ok(content) = fs::read_to_string(&user_path) {
-                log::debug!("Loaded TLD list from {}", user_path.display());
-                return Ok(Self::parse(&content));
-            }
+        if user_path.exists()
+            && let Ok(content) = fs::read_to_string(&user_path)
+        {
+            log::debug!("Loaded TLD list from {}", user_path.display());
+            return Ok(Self::parse(&content));
         }
 
         // Try system config
         let system_path = system_dir.join("tlds.txt");
-        if system_path.exists() {
-            if let Ok(content) = fs::read_to_string(&system_path) {
-                log::debug!("Loaded TLD list from {}", system_path.display());
-                return Ok(Self::parse(&content));
-            }
+        if system_path.exists()
+            && let Ok(content) = fs::read_to_string(&system_path)
+        {
+            log::debug!("Loaded TLD list from {}", system_path.display());
+            return Ok(Self::parse(&content));
         }
 
         // Fall back to built-in

@@ -50,7 +50,8 @@ impl BootstrapClient {
             }
             QueryType::Domain => {
                 // Priority: tlds.json first, then bootstrap
-                if let Some(url) = config::lookup_tld_override(&self.tld_overrides, &request.query) {
+                if let Some(url) = config::lookup_tld_override(&self.tld_overrides, &request.query)
+                {
                     log::debug!("Found TLD override for {}: {}", request.query, url);
                     return Ok(vec![url]);
                 }
@@ -72,16 +73,12 @@ impl BootstrapClient {
                 let registry = self.fetch_registry(&self.config.bootstrap.asn).await?;
                 self.match_asn(&registry, &request.query)
             }
-            QueryType::Entity => {
-                Err(RdapError::Bootstrap(
-                    "Entity queries require explicit server (-s/--server)".to_string()
-                ))
-            }
-            _ => {
-                Err(RdapError::Bootstrap(
-                    "This query type requires explicit server (-s/--server)".to_string()
-                ))
-            }
+            QueryType::Entity => Err(RdapError::Bootstrap(
+                "Entity queries require explicit server (-s/--server)".to_string(),
+            )),
+            _ => Err(RdapError::Bootstrap(
+                "This query type requires explicit server (-s/--server)".to_string(),
+            )),
         }
     }
 
@@ -110,18 +107,19 @@ impl BootstrapClient {
         let mut map: HashMap<String, Vec<String>> = HashMap::new();
         for service in &registry.services {
             if service.len() >= 2
-                && let (Some(entries), Some(urls)) = (service[0].as_array(), service[1].as_array()) {
-                    let url_strings: Vec<String> = urls
-                        .iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect();
+                && let (Some(entries), Some(urls)) = (service[0].as_array(), service[1].as_array())
+            {
+                let url_strings: Vec<String> = urls
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
 
-                    for entry in entries {
-                        if let Some(tld) = entry.as_str() {
-                            map.insert(tld.to_lowercase(), url_strings.clone());
-                        }
+                for entry in entries {
+                    if let Some(tld) = entry.as_str() {
+                        map.insert(tld.to_lowercase(), url_strings.clone());
                     }
                 }
+            }
         }
 
         // Try to match from most specific to least specific
@@ -147,23 +145,26 @@ impl BootstrapClient {
         // Extract the IP part (for CIDR queries like 8.8.8.0/24, we match using the network address)
         let ip_str = ip::extract_ip_from_cidr(&normalized);
 
-        let addr: IpAddr = ip_str.parse()
+        let addr: IpAddr = ip_str
+            .parse()
             .map_err(|_| RdapError::InvalidQuery(format!("Invalid IP address: {}", ip_str)))?;
 
         for service in &registry.services {
             if service.len() >= 2
-                && let (Some(entries), Some(urls)) = (service[0].as_array(), service[1].as_array()) {
-                    for entry in entries {
-                        if let Some(cidr) = entry.as_str()
-                            && self.ip_in_network(&addr, cidr) {
-                                let url_list: Vec<Url> = urls
-                                    .iter()
-                                    .filter_map(|v| v.as_str().and_then(|s| Url::parse(s).ok()))
-                                    .collect();
-                                return Ok(url_list);
-                            }
+                && let (Some(entries), Some(urls)) = (service[0].as_array(), service[1].as_array())
+            {
+                for entry in entries {
+                    if let Some(cidr) = entry.as_str()
+                        && self.ip_in_network(&addr, cidr)
+                    {
+                        let url_list: Vec<Url> = urls
+                            .iter()
+                            .filter_map(|v| v.as_str().and_then(|s| Url::parse(s).ok()))
+                            .collect();
+                        return Ok(url_list);
                     }
                 }
+            }
         }
 
         Ok(vec![])
@@ -185,23 +186,26 @@ impl BootstrapClient {
         } else {
             asn_str
         };
-        let asn: u32 = asn_str.parse()
+        let asn: u32 = asn_str
+            .parse()
             .map_err(|_| RdapError::InvalidQuery(format!("Invalid AS number: {}", asn_str)))?;
 
         for service in &registry.services {
             if service.len() >= 2
-                && let (Some(entries), Some(urls)) = (service[0].as_array(), service[1].as_array()) {
-                    for entry in entries {
-                        if let Some(range_str) = entry.as_str()
-                            && self.asn_in_range(asn, range_str) {
-                                let url_list: Vec<Url> = urls
-                                    .iter()
-                                    .filter_map(|v| v.as_str().and_then(|s| Url::parse(s).ok()))
-                                    .collect();
-                                return Ok(url_list);
-                            }
+                && let (Some(entries), Some(urls)) = (service[0].as_array(), service[1].as_array())
+            {
+                for entry in entries {
+                    if let Some(range_str) = entry.as_str()
+                        && self.asn_in_range(asn, range_str)
+                    {
+                        let url_list: Vec<Url> = urls
+                            .iter()
+                            .filter_map(|v| v.as_str().and_then(|s| Url::parse(s).ok()))
+                            .collect();
+                        return Ok(url_list);
                     }
                 }
+            }
         }
 
         Ok(vec![])

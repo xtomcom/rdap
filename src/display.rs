@@ -46,12 +46,14 @@ impl RdapDisplayWithQuery for RdapObject {
 fn find_contact_by_role(entities: &[Entity], role: &str) -> Option<String> {
     for entity in entities {
         // Check if this entity has the specified role
-        if entity.roles.iter().any(|r| r.to_lowercase() == role.to_lowercase()) {
-            if let Some(vcard) = &entity.vcard {
-                if let Some(email) = vcard.email() {
-                    return Some(email.to_string());
-                }
-            }
+        if entity
+            .roles
+            .iter()
+            .any(|r| r.to_lowercase() == role.to_lowercase())
+            && let Some(vcard) = &entity.vcard
+            && let Some(email) = vcard.email()
+        {
+            return Some(email.to_string());
         }
         // Recursively check nested entities
         if let Some(email) = find_contact_by_role(&entity.entities, role) {
@@ -73,7 +75,11 @@ pub fn display_ip_abuse_contact(ip: &IpNetwork, query: &str) -> bool {
         return false;
     }
     if let Some(abuse_email) = find_abuse_contact(&ip.entities) {
-        println!("Abuse contact for `{}` is `{}`", query.cyan().bold(), abuse_email.yellow().bold());
+        println!(
+            "Abuse contact for `{}` is `{}`",
+            query.cyan().bold(),
+            abuse_email.yellow().bold()
+        );
         println!();
         return true;
     }
@@ -87,7 +93,11 @@ pub fn display_asn_abuse_contact(asn: &Autnum, query: &str) -> bool {
         return false;
     }
     if let Some(abuse_email) = find_abuse_contact(&asn.entities) {
-        println!("Abuse contact for `{}` is `{}`", query.cyan().bold(), abuse_email.yellow().bold());
+        println!(
+            "Abuse contact for `{}` is `{}`",
+            query.cyan().bold(),
+            abuse_email.yellow().bold()
+        );
         println!();
         return true;
     }
@@ -106,20 +116,32 @@ pub fn display_domain_contacts(domain: &Domain, query: &str, is_tld: bool) -> bo
     if is_tld {
         // TLD query - show administrative and technical contacts
         if let Some(admin_email) = find_contact_by_role(&domain.entities, "administrative") {
-            println!("Administrative contact for `{}` is `{}`", query.cyan().bold(), admin_email.yellow().bold());
+            println!(
+                "Administrative contact for `{}` is `{}`",
+                query.cyan().bold(),
+                admin_email.yellow().bold()
+            );
             printed = true;
         }
         if let Some(tech_email) = find_contact_by_role(&domain.entities, "technical") {
             if printed {
                 println!(); // Add blank line between contacts
             }
-            println!("Technical contact for `{}` is `{}`", query.cyan().bold(), tech_email.yellow().bold());
+            println!(
+                "Technical contact for `{}` is `{}`",
+                query.cyan().bold(),
+                tech_email.yellow().bold()
+            );
             printed = true;
         }
     } else {
         // Domain query - show abuse contact
         if let Some(abuse_email) = find_abuse_contact(&domain.entities) {
-            println!("Abuse contact for `{}` is `{}`", query.cyan().bold(), abuse_email.yellow().bold());
+            println!(
+                "Abuse contact for `{}` is `{}`",
+                query.cyan().bold(),
+                abuse_email.yellow().bold()
+            );
             printed = true;
         }
     }
@@ -145,25 +167,33 @@ impl RdapDisplay for Domain {
     fn display(&self, verbose: bool) {
         // Domain name
         if let Some(name) = &self.ldh_name {
-            println!("{}: {}", "Domain Name".bright_white().bold(), name.bright_cyan().bold());
+            println!(
+                "{}: {}",
+                "Domain Name".bright_white().bold(),
+                name.bright_cyan().bold()
+            );
         }
-        
+
         if let Some(unicode) = &self.unicode_name {
             println!("{}: {}", "Unicode Name".white(), unicode.cyan());
         }
-        
+
         if let Some(handle) = &self.handle {
             println!("{}: {}", "Handle".white(), handle.normal());
         }
-        
+
         // Object class
-        println!("{}: {}", "Object Class".white(), self.object_class_name.normal());
-        
+        println!(
+            "{}: {}",
+            "Object Class".white(),
+            self.object_class_name.normal()
+        );
+
         // Port43
         if let Some(port43) = &self.port43 {
             println!("{}: {}", "Port43".white(), port43.normal());
         }
-        
+
         // Status
         if !self.status.is_empty() {
             for status in &self.status {
@@ -175,7 +205,7 @@ impl RdapDisplay for Domain {
                 println!("{}: {}", "Status".white(), color_status);
             }
         }
-        
+
         // Nameservers
         if !self.nameservers.is_empty() {
             for ns in &self.nameservers {
@@ -191,33 +221,55 @@ impl RdapDisplay for Domain {
                 }
             }
         }
-        
+
         // DNSSEC
         if let Some(dnssec) = &self.secure_dns {
             if let Some(zone_signed) = dnssec.zone_signed {
-                println!("{}: {}", "Zone Signed".white(), 
-                    if zone_signed { "yes".green() } else { "no".red() });
+                println!(
+                    "{}: {}",
+                    "Zone Signed".white(),
+                    if zone_signed {
+                        "yes".green()
+                    } else {
+                        "no".red()
+                    }
+                );
             }
             if let Some(delegation_signed) = dnssec.delegation_signed {
-                println!("{}: {}", "Delegation Signed".white(), 
-                    if delegation_signed { "yes".green() } else { "no".red() });
+                println!(
+                    "{}: {}",
+                    "Delegation Signed".white(),
+                    if delegation_signed {
+                        "yes".green()
+                    } else {
+                        "no".red()
+                    }
+                );
             }
             for ds in &dnssec.ds_data {
                 if let Some(key_tag) = ds.key_tag {
                     println!("{}: {}", "DS Key Tag".white(), key_tag.to_string().normal());
                 }
                 if let Some(algorithm) = ds.algorithm {
-                    println!("{}: {}", "DS Algorithm".white(), algorithm.to_string().normal());
+                    println!(
+                        "{}: {}",
+                        "DS Algorithm".white(),
+                        algorithm.to_string().normal()
+                    );
                 }
                 if let Some(digest_type) = ds.digest_type {
-                    println!("{}: {}", "DS Digest Type".white(), digest_type.to_string().normal());
+                    println!(
+                        "{}: {}",
+                        "DS Digest Type".white(),
+                        digest_type.to_string().normal()
+                    );
                 }
                 if let Some(digest) = &ds.digest {
                     println!("{}: {}", "DS Digest".white(), digest.normal());
                 }
             }
         }
-        
+
         // Events
         for event in &self.events {
             let action = match event.action.as_str() {
@@ -232,7 +284,7 @@ impl RdapDisplay for Domain {
             };
             println!("{}: {}", action.white(), event.date.normal());
         }
-        
+
         // Entities
         if !self.entities.is_empty() {
             println!();
@@ -240,32 +292,37 @@ impl RdapDisplay for Domain {
                 display_entity(entity, verbose);
             }
         }
-        
+
         // Links
         if verbose {
             for link in &self.links {
                 if let Some(rel) = &link.rel {
-                    println!("{}: {} ({})", "Link".white(), link.href.cyan(), rel.dimmed());
+                    println!(
+                        "{}: {} ({})",
+                        "Link".white(),
+                        link.href.cyan(),
+                        rel.dimmed()
+                    );
                 } else {
                     println!("{}: {}", "Link".white(), link.href.cyan());
                 }
             }
         }
-        
+
         // Remarks
         if verbose {
             for remark in &self.remarks {
                 display_notice(remark);
             }
         }
-        
+
         // Notices
         if verbose {
             for notice in &self.notices {
                 display_notice(notice);
             }
         }
-        
+
         // Conformance
         if verbose && !self.conformance.is_empty() {
             println!("\n{}", "RDAP Conformance:".dimmed());
@@ -296,7 +353,11 @@ impl RdapDisplayWithQuery for IpNetwork {
         }
 
         if let Some(ip_ver) = &self.ip_version {
-            println!("{}: {}", "IP Version".white(), format!("v{}", ip_ver).normal());
+            println!(
+                "{}: {}",
+                "IP Version".white(),
+                format!("v{}", ip_ver).normal()
+            );
         }
 
         if let Some(name) = &self.name {
@@ -374,9 +435,17 @@ impl RdapDisplayWithQuery for Autnum {
         // AS Number
         if let (Some(start), Some(end)) = (self.start_autnum, self.end_autnum) {
             if start == end {
-                println!("{}: {}", "AS Number".white(), format!("AS{}", start).cyan().bold());
+                println!(
+                    "{}: {}",
+                    "AS Number".white(),
+                    format!("AS{}", start).cyan().bold()
+                );
             } else {
-                println!("{}: {}", "Start Autnum".white(), format!("AS{}", start).cyan());
+                println!(
+                    "{}: {}",
+                    "Start Autnum".white(),
+                    format!("AS{}", start).cyan()
+                );
                 println!("{}: {}", "End Autnum".white(), format!("AS{}", end).cyan());
             }
         }
@@ -441,7 +510,12 @@ impl RdapDisplayWithQuery for Autnum {
         if verbose {
             for link in &self.links {
                 if let Some(rel) = &link.rel {
-                    println!("{}: {} ({})", "Link".white(), link.href.cyan(), rel.dimmed());
+                    println!(
+                        "{}: {} ({})",
+                        "Link".white(),
+                        link.href.cyan(),
+                        rel.dimmed()
+                    );
                 } else {
                     println!("{}: {}", "Link".white(), link.href.cyan());
                 }
@@ -471,12 +545,12 @@ impl RdapDisplay for Entity {
             // Display main entity first
             display_entity(self, verbose);
             println!();
-            
+
             // Collect and display all nested entities
             let entity_map = collect_entities(&self.entities);
             let mut handles: Vec<_> = entity_map.keys().collect();
             handles.sort();
-            
+
             for handle in handles {
                 if let Some(entity) = entity_map.get(handle) {
                     display_entity(entity, verbose);
@@ -487,7 +561,7 @@ impl RdapDisplay for Entity {
             // No nested entities, just display this one
             display_entity(self, verbose);
         }
-        
+
         // Display notices (for top-level entity response)
         if verbose && !self.notices.is_empty() {
             for notice in &self.notices {
@@ -502,11 +576,11 @@ impl RdapDisplay for Nameserver {
         if let Some(name) = &self.ldh_name {
             println!("{}: {}", "Nameserver".white(), name.cyan().bold());
         }
-        
+
         if let Some(handle) = &self.handle {
             println!("{}: {}", "Handle".white(), handle.normal());
         }
-        
+
         if let Some(ips) = &self.ip_addresses {
             for ip in &ips.v4 {
                 println!("{}: {}", "IPv4".white(), ip.cyan());
@@ -515,24 +589,24 @@ impl RdapDisplay for Nameserver {
                 println!("{}: {}", "IPv6".white(), ip.cyan());
             }
         }
-        
+
         // Status
         for status in &self.status {
             println!("{}: {}", "Status".white(), status.green());
         }
-        
+
         // Events
         for event in &self.events {
             println!("{}: {}", event.action.white(), event.date.normal());
         }
-        
+
         // Entities - deduplicate and display
         if !self.entities.is_empty() {
             println!();
             let entity_map = collect_entities(&self.entities);
             let mut handles: Vec<_> = entity_map.keys().collect();
             handles.sort();
-            
+
             for handle in handles {
                 if let Some(entity) = entity_map.get(handle) {
                     display_entity(entity, verbose);
@@ -540,7 +614,7 @@ impl RdapDisplay for Nameserver {
                 }
             }
         }
-        
+
         if verbose {
             for link in &self.links {
                 println!("{}: {}", "Link".white(), link.href.cyan());
@@ -560,15 +634,15 @@ impl RdapDisplay for ErrorResponse {
         if let Some(code) = self.error_code {
             println!("{}: {}", "Error Code".red(), code.to_string().red().bold());
         }
-        
+
         if let Some(title) = &self.title {
             println!("{}: {}", "Title".white(), title.normal());
         }
-        
+
         for desc in &self.description {
             println!("{}: {}", "Description".white(), desc.normal());
         }
-        
+
         for notice in &self.notices {
             display_notice(notice);
         }
@@ -577,9 +651,13 @@ impl RdapDisplay for ErrorResponse {
 
 impl RdapDisplay for DomainSearchResults {
     fn display(&self, verbose: bool) {
-        println!("{}: {}", "Domain Search Results".white(), self.domains.len().to_string().cyan());
+        println!(
+            "{}: {}",
+            "Domain Search Results".white(),
+            self.domains.len().to_string().cyan()
+        );
         println!();
-        
+
         for (i, domain) in self.domains.iter().enumerate() {
             if i > 0 {
                 println!("\n{}", "---".dimmed());
@@ -591,9 +669,13 @@ impl RdapDisplay for DomainSearchResults {
 
 impl RdapDisplay for EntitySearchResults {
     fn display(&self, verbose: bool) {
-        println!("{}: {}", "Entity Search Results".white(), self.entities.len().to_string().cyan());
+        println!(
+            "{}: {}",
+            "Entity Search Results".white(),
+            self.entities.len().to_string().cyan()
+        );
         println!();
-        
+
         for (i, entity) in self.entities.iter().enumerate() {
             if i > 0 {
                 println!("\n{}", "---".dimmed());
@@ -605,9 +687,13 @@ impl RdapDisplay for EntitySearchResults {
 
 impl RdapDisplay for NameserverSearchResults {
     fn display(&self, verbose: bool) {
-        println!("{}: {}", "Nameserver Search Results".white(), self.nameservers.len().to_string().cyan());
+        println!(
+            "{}: {}",
+            "Nameserver Search Results".white(),
+            self.nameservers.len().to_string().cyan()
+        );
         println!();
-        
+
         for (i, ns) in self.nameservers.iter().enumerate() {
             if i > 0 {
                 println!("\n{}", "---".dimmed());
@@ -630,7 +716,7 @@ impl RdapDisplay for HelpResponse {
 /// Collect all entities with deduplication and merging
 fn collect_entities(entities: &[Entity]) -> HashMap<String, Entity> {
     let mut entity_map: HashMap<String, Entity> = HashMap::new();
-    
+
     fn collect_recursive(entities: &[Entity], map: &mut HashMap<String, Entity>) {
         for entity in entities {
             if let Some(handle) = &entity.handle {
@@ -652,7 +738,11 @@ fn collect_entities(entities: &[Entity]) -> HashMap<String, Entity> {
                             existing.port43 = entity.port43.clone();
                         }
                         for event in &entity.events {
-                            if !existing.events.iter().any(|e| e.action == event.action && e.date == event.date) {
+                            if !existing
+                                .events
+                                .iter()
+                                .any(|e| e.action == event.action && e.date == event.date)
+                            {
                                 existing.events.push(event.clone());
                             }
                         }
@@ -668,13 +758,13 @@ fn collect_entities(entities: &[Entity]) -> HashMap<String, Entity> {
                         }
                     })
                     .or_insert_with(|| entity.clone());
-                
+
                 // Recursively collect nested entities
                 collect_recursive(&entity.entities, map);
             }
         }
     }
-    
+
     collect_recursive(entities, &mut entity_map);
     entity_map
 }
@@ -684,13 +774,13 @@ fn display_entity(entity: &Entity, verbose: bool) {
     if let Some(handle) = &entity.handle {
         println!("{}: {}", "Entity Handle".white(), handle.normal());
     }
-    
+
     if !entity.roles.is_empty() {
         for role in &entity.roles {
             println!("{}: {}", "Role".white(), role.yellow());
         }
     }
-    
+
     // vCard information
     if let Some(vcard) = &entity.vcard {
         if let Some(name) = vcard.name() {
@@ -705,7 +795,7 @@ fn display_entity(entity: &Entity, verbose: bool) {
         if let Some(tel) = vcard.tel() {
             println!("{}: {}", "Phone".white(), tel.normal());
         }
-        
+
         if let Some(addr) = vcard.address() {
             // If there's a pre-formatted label, use that
             if let Some(label) = &addr.label {
@@ -736,42 +826,53 @@ fn display_entity(entity: &Entity, verbose: bool) {
             }
         }
     }
-    
+
     // Status
     for status in &entity.status {
         println!("{}: {}", "Status".white(), status.green());
     }
-    
+
     // Port43
     if let Some(port43) = &entity.port43 {
         println!("{}: {}", "Port43".white(), port43.normal());
     }
-    
+
     // Events
     for event in &entity.events {
         println!("{}: {}", event.action.white(), event.date.normal());
     }
-    
+
     // Public IDs
     for public_id in &entity.public_ids {
-        println!("{}: {}", public_id.id_type.white(), public_id.identifier.cyan());
+        println!(
+            "{}: {}",
+            public_id.id_type.white(),
+            public_id.identifier.cyan()
+        );
     }
-    
+
     // Links (always show self link)
     for link in &entity.links {
         if let Some(rel) = &link.rel
-            && rel == "self" {
-                println!("{}: {}", "Link".dimmed(), link.href.cyan());
-            }
+            && rel == "self"
+        {
+            println!("{}: {}", "Link".dimmed(), link.href.cyan());
+        }
     }
-    
+
     // More details in verbose mode
     if verbose {
         for link in &entity.links {
             if let Some(rel) = &link.rel
-                && rel != "self" {
-                    println!("{}: {} ({})", "Link".white(), link.href.cyan(), rel.dimmed());
-                }
+                && rel != "self"
+            {
+                println!(
+                    "{}: {} ({})",
+                    "Link".white(),
+                    link.href.cyan(),
+                    rel.dimmed()
+                );
+            }
         }
         for remark in &entity.remarks {
             display_notice(remark);

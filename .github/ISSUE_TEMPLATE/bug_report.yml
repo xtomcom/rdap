@@ -33,7 +33,7 @@ body:
     attributes:
       label: OS Version
       description: What version of your OS are you using?
-      placeholder: "e.g., Ubuntu 24.04, macOS 15.0, Windows 11"
+      placeholder: "e.g., Debian 13, Ubuntu 24.04, macOS 26.2, Windows 11"
     validations:
       required: false
 

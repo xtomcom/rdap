@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 pub struct DomainSearchResults {
     #[serde(rename = "rdapConformance", default)]
     pub conformance: Vec<String>,
-    
+
     #[serde(default)]
     pub notices: Vec<Notice>,
-    
+
     #[serde(rename = "domainSearchResults", default)]
     pub domains: Vec<Domain>,
-    
+
     #[serde(default)]
     pub lang: Option<String>,
 }
@@ -24,13 +24,13 @@ pub struct DomainSearchResults {
 pub struct EntitySearchResults {
     #[serde(rename = "rdapConformance", default)]
     pub conformance: Vec<String>,
-    
+
     #[serde(default)]
     pub notices: Vec<Notice>,
-    
+
     #[serde(rename = "entitySearchResults", default)]
     pub entities: Vec<Entity>,
-    
+
     #[serde(default)]
     pub lang: Option<String>,
 }
@@ -40,13 +40,13 @@ pub struct EntitySearchResults {
 pub struct NameserverSearchResults {
     #[serde(rename = "rdapConformance", default)]
     pub conformance: Vec<String>,
-    
+
     #[serde(default)]
     pub notices: Vec<Notice>,
-    
+
     #[serde(rename = "nameserverSearchResults", default)]
     pub nameservers: Vec<Nameserver>,
-    
+
     #[serde(default)]
     pub lang: Option<String>,
 }

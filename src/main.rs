@@ -1,9 +1,9 @@
 //! RDAP command-line client
 
 use clap::{Parser, ValueEnum};
-use rdap::{display::RdapDisplay, RdapClient, RdapRequest, QueryType};
-use std::process;
 use colored::Colorize;
+use rdap::{QueryType, RdapClient, RdapRequest, display::RdapDisplay};
+use std::process;
 
 #[derive(Parser)]
 #[command(name = "rdap")]
@@ -117,10 +117,10 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let tld_list = rdap::config::TldList::load().ok();
 
     // Normalize IP addresses (handles shorthand like 1.1 -> 1.0.0.1)
-    if rdap::ip::is_ip_like(&query) {
-        if let Some(normalized) = rdap::ip::normalize_ip(&query) {
-            query = normalized;
-        }
+    if rdap::ip::is_ip_like(&query)
+        && let Some(normalized) = rdap::ip::normalize_ip(&query)
+    {
+        query = normalized;
     }
 
     // Detect or use specified query type
@@ -134,7 +134,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.verbose {
         eprintln!("{} Query: {}", "→".bright_blue(), query.bright_white());
-        eprintln!("{} Type:  {}", "→".bright_blue(), format!("{}", query_type).bright_yellow());
+        eprintln!(
+            "{} Type:  {}",
+            "→".bright_blue(),
+            format!("{}", query_type).bright_yellow()
+        );
     }
 
     // Build request
@@ -144,7 +148,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         let url = url::Url::parse(&server_url)?;
         request = request.with_server(url);
         if cli.verbose {
-            eprintln!("{} Server: {}", "→".bright_blue(), server_url.bright_green());
+            eprintln!(
+                "{} Server: {}",
+                "→".bright_blue(),
+                server_url.bright_green()
+            );
         }
     }
 
@@ -167,10 +175,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             // For domain queries with registrar data, show both
             if query_result.registrar.is_some() && query_type == QueryType::Domain {
                 // Show abuse contact from registrar first (if available)
-                if let Some(registrar) = &query_result.registrar {
-                    if let rdap::RdapObject::Domain(domain) = registrar {
-                        rdap::display::display_domain_contacts(domain, &query, false);
-                    }
+                if let Some(rdap::RdapObject::Domain(domain)) = &query_result.registrar {
+                    rdap::display::display_domain_contacts(domain, &query, false);
                 }
 
                 // Show registry server URL and data
@@ -229,12 +235,18 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         OutputFormat::Json => {
             // For JSON output, prefer registrar data if available
-            let result = query_result.registrar.as_ref().unwrap_or(&query_result.registry);
+            let result = query_result
+                .registrar
+                .as_ref()
+                .unwrap_or(&query_result.registry);
             let json = serde_json::to_string(result)?;
             println!("{}", json);
         }
         OutputFormat::JsonPretty => {
-            let result = query_result.registrar.as_ref().unwrap_or(&query_result.registry);
+            let result = query_result
+                .registrar
+                .as_ref()
+                .unwrap_or(&query_result.registry);
             let json = serde_json::to_string_pretty(result)?;
             println!("{}", json);
         }
@@ -244,8 +256,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_update() -> Result<(), Box<dyn std::error::Error>> {
-    use rdap::config;
     use colored::Colorize;
+    use rdap::config;
 
     println!("{} Updating configuration files...", "→".bright_blue());
     println!("  Source: {}", "https://github.com/xtomcom/rdap".cyan());
@@ -278,7 +290,10 @@ async fn run_update() -> Result<(), Box<dyn std::error::Error>> {
 
     // Show config directory
     if let Ok(config_dir) = config::user_config_dir() {
-        println!("Config directory: {}", config_dir.display().to_string().cyan());
+        println!(
+            "Config directory: {}",
+            config_dir.display().to_string().cyan()
+        );
         println!();
         println!("{}", "Note:".bright_yellow().bold());
         println!("  - Your custom settings in *.local.json files are preserved");

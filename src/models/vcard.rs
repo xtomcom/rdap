@@ -15,75 +15,78 @@ impl VCard {
         if arr.len() != 2 {
             return None;
         }
-        
+
         if arr[0].as_str() != Some("vcard") {
             return None;
         }
-        
+
         let props = arr[1].as_array()?;
         let mut properties = Vec::new();
-        
+
         for prop in props {
             if let Some(p) = VCardProperty::from_value(prop) {
                 properties.push(p);
             }
         }
-        
+
         Some(VCard { properties })
     }
-    
+
     /// Get formatted name
     pub fn name(&self) -> Option<&str> {
         self.get_property_value("fn")
     }
-    
+
     /// Get email
     pub fn email(&self) -> Option<&str> {
         self.get_property_value("email")
     }
-    
+
     /// Get telephone
     pub fn tel(&self) -> Option<&str> {
         self.get_property_value("tel")
     }
-    
+
     /// Get organization
     pub fn org(&self) -> Option<&str> {
         self.get_property_value("org")
     }
-    
+
     /// Get address components
     pub fn address(&self) -> Option<VCardAddress> {
         let prop = self.properties.iter().find(|p| p.name == "adr")?;
-        
+
         // Check for label parameter (pre-formatted address)
-        let label = prop.parameters.get("label")
+        let label = prop
+            .parameters
+            .get("label")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        
+
         if let VCardValue::Structured(parts) = &prop.value
-            && parts.len() >= 7 {
-                return Some(VCardAddress {
-                    label,
-                    po_box: parts[0].to_string(),
-                    extended: parts[1].to_string(),
-                    street: parts[2].to_string(),
-                    locality: parts[3].to_string(),
-                    region: parts[4].to_string(),
-                    postal_code: parts[5].to_string(),
-                    country: parts[6].to_string(),
-                });
-            }
+            && parts.len() >= 7
+        {
+            return Some(VCardAddress {
+                label,
+                po_box: parts[0].to_string(),
+                extended: parts[1].to_string(),
+                street: parts[2].to_string(),
+                locality: parts[3].to_string(),
+                region: parts[4].to_string(),
+                postal_code: parts[5].to_string(),
+                country: parts[6].to_string(),
+            });
+        }
         None
     }
-    
+
     fn get_property_value(&self, name: &str) -> Option<&str> {
         self.properties
             .iter()
             .find(|p| p.name == name)
             .and_then(|p| p.value.as_str())
     }
-    
+
     pub fn properties(&self) -> &[VCardProperty] {
         &self.properties
     }
@@ -104,12 +107,12 @@ impl VCardProperty {
         if arr.len() < 4 {
             return None;
         }
-        
+
         let name = arr[0].as_str()?.to_string();
         let parameters = arr[1].as_object()?.clone();
         let value_type = arr[2].as_str()?.to_string();
         let value = VCardValue::from_json(&arr[3]);
-        
+
         Some(VCardProperty {
             name,
             parameters,
@@ -145,7 +148,7 @@ impl VCardValue {
             _ => VCardValue::Text(val.to_string()),
         }
     }
-    
+
     fn as_str(&self) -> Option<&str> {
         match self {
             VCardValue::Text(s) => Some(s),
@@ -186,7 +189,7 @@ impl Serialize for VCard {
         use serde::ser::SerializeSeq;
         let mut seq = serializer.serialize_seq(Some(2))?;
         seq.serialize_element("vcard")?;
-        
+
         let mut props = Vec::new();
         for prop in &self.properties {
             let p = serde_json::json!([

@@ -1,6 +1,6 @@
 //! Example: JSON output
 
-use rdap::{RdapClient, RdapRequest, QueryType};
+use rdap::{QueryType, RdapClient, RdapRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

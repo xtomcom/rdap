@@ -7,21 +7,21 @@ use serde::{Deserialize, Serialize};
 pub struct Link {
     #[serde(default)]
     pub value: Option<String>,
-    
+
     #[serde(default)]
     pub rel: Option<String>,
-    
+
     pub href: String,
-    
+
     #[serde(default)]
     pub hreflang: Vec<String>,
-    
+
     #[serde(default)]
     pub title: Option<String>,
-    
+
     #[serde(default)]
     pub media: Option<String>,
-    
+
     #[serde(rename = "type", default)]
     pub link_type: Option<String>,
 }
@@ -31,13 +31,13 @@ pub struct Link {
 pub struct Notice {
     #[serde(default)]
     pub title: Option<String>,
-    
+
     #[serde(rename = "type", default)]
     pub notice_type: Option<String>,
-    
+
     #[serde(default)]
     pub description: Vec<String>,
-    
+
     #[serde(default)]
     pub links: Vec<Link>,
 }
@@ -47,13 +47,13 @@ pub struct Notice {
 pub struct Event {
     #[serde(rename = "eventAction")]
     pub action: String,
-    
+
     #[serde(rename = "eventActor", default)]
     pub actor: Option<String>,
-    
+
     #[serde(rename = "eventDate")]
     pub date: String,
-    
+
     #[serde(default)]
     pub links: Vec<Link>,
 }
@@ -63,7 +63,7 @@ pub struct Event {
 pub struct PublicId {
     #[serde(rename = "type")]
     pub id_type: String,
-    
+
     pub identifier: String,
 }
 

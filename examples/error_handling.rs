@@ -1,23 +1,23 @@
 //! Error handling example
 
-use rdap::{RdapClient, RdapRequest, QueryType, RdapObject, RdapError};
+use rdap::{QueryType, RdapClient, RdapError, RdapObject, RdapRequest};
 
 #[tokio::main]
 async fn main() {
     let client = RdapClient::new().unwrap();
-    
+
     // Try queries that might fail
     let queries = vec![
         ("nonexistent-domain-12345.com", QueryType::Domain),
         ("999.999.999.999", QueryType::Ip),
         ("AS99999999", QueryType::Autnum),
     ];
-    
+
     for (query, query_type) in queries {
         println!("\n=== Querying: {} ===", query);
-        
+
         let request = RdapRequest::new(query_type, query);
-        
+
         match client.query(&request).await {
             Ok(result) => {
                 // Check if it's an error response from the RDAP server

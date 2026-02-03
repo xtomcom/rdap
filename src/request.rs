@@ -77,17 +77,19 @@ impl RdapRequest {
             server: None,
         }
     }
-    
+
     /// Set the RDAP server URL
     pub fn with_server(mut self, server: Url) -> Self {
         self.server = Some(server);
         self
     }
-    
+
     /// Build the full RDAP URL
     pub fn build_url(&self, base_url: &Url) -> Result<Url> {
         let path = match self.query_type {
-            QueryType::Domain | QueryType::Tld => format!("domain/{}", urlencoding::encode(&self.query)),
+            QueryType::Domain | QueryType::Tld => {
+                format!("domain/{}", urlencoding::encode(&self.query))
+            }
             QueryType::Ip => format!("ip/{}", self.query),
             QueryType::Autnum => {
                 // Case-insensitive strip of "AS" prefix
@@ -102,31 +104,45 @@ impl RdapRequest {
             QueryType::Nameserver => format!("nameserver/{}", urlencoding::encode(&self.query)),
             QueryType::Help => "help".to_string(),
             QueryType::DomainSearch => {
-                return Ok(base_url.join(&format!("domains?name={}", urlencoding::encode(&self.query)))?);
+                return Ok(base_url.join(&format!(
+                    "domains?name={}",
+                    urlencoding::encode(&self.query)
+                ))?);
             }
             QueryType::DomainSearchByNameserver => {
-                return Ok(base_url.join(&format!("domains?nsLdhName={}", urlencoding::encode(&self.query)))?);
+                return Ok(base_url.join(&format!(
+                    "domains?nsLdhName={}",
+                    urlencoding::encode(&self.query)
+                ))?);
             }
             QueryType::DomainSearchByNameserverIp => {
                 return Ok(base_url.join(&format!("domains?nsIp={}", self.query))?);
             }
             QueryType::NameserverSearch => {
-                return Ok(base_url.join(&format!("nameservers?name={}", urlencoding::encode(&self.query)))?);
+                return Ok(base_url.join(&format!(
+                    "nameservers?name={}",
+                    urlencoding::encode(&self.query)
+                ))?);
             }
             QueryType::NameserverSearchByIp => {
                 return Ok(base_url.join(&format!("nameservers?ip={}", self.query))?);
             }
             QueryType::EntitySearch => {
-                return Ok(base_url.join(&format!("entities?fn={}", urlencoding::encode(&self.query)))?);
+                return Ok(
+                    base_url.join(&format!("entities?fn={}", urlencoding::encode(&self.query)))?
+                );
             }
             QueryType::EntitySearchByHandle => {
-                return Ok(base_url.join(&format!("entities?handle={}", urlencoding::encode(&self.query)))?);
+                return Ok(base_url.join(&format!(
+                    "entities?handle={}",
+                    urlencoding::encode(&self.query)
+                ))?);
             }
         };
-        
+
         Ok(base_url.join(&path)?)
     }
-    
+
     /// Detect query type from string
     pub fn detect_type(query: &str) -> Result<QueryType> {
         Self::detect_type_with_tld_check(query, |_| false)
@@ -138,23 +154,22 @@ impl RdapRequest {
         F: Fn(&str) -> bool,
     {
         // Check for AS number
-        if query.to_uppercase().starts_with("AS")
-            && query[2..].chars().all(|c| c.is_ascii_digit()) {
-                return Ok(QueryType::Autnum);
-            }
+        if query.to_uppercase().starts_with("AS") && query[2..].chars().all(|c| c.is_ascii_digit())
+        {
+            return Ok(QueryType::Autnum);
+        }
 
         // Check for pure number (AS number without AS prefix)
         // But not if it looks like an IP (e.g., large numbers that could be IPs)
         if query.chars().all(|c| c.is_ascii_digit()) {
             // Numbers > 4294967295 can't be AS numbers or IPs
-            if let Ok(n) = query.parse::<u64>() {
-                if n <= 4294967295 {
-                    // Could be AS number or IP in numeric form
-                    // Treat as AS number if it's a reasonable AS number range
-                    if n <= 4294967294 {
-                        return Ok(QueryType::Autnum);
-                    }
-                }
+            if let Ok(n) = query.parse::<u64>()
+                && n <= 4294967295
+                && n <= 4294967294
+            {
+                // Could be AS number or IP in numeric form
+                // Treat as AS number if it's a reasonable AS number range
+                return Ok(QueryType::Autnum);
             }
             return Ok(QueryType::Autnum);
         }
@@ -177,13 +192,28 @@ impl RdapRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_detect_type() {
-        assert_eq!(RdapRequest::detect_type("example.com").unwrap(), QueryType::Domain);
-        assert_eq!(RdapRequest::detect_type("192.0.2.1").unwrap(), QueryType::Ip);
-        assert_eq!(RdapRequest::detect_type("2001:db8::1").unwrap(), QueryType::Ip);
-        assert_eq!(RdapRequest::detect_type("AS15169").unwrap(), QueryType::Autnum);
-        assert_eq!(RdapRequest::detect_type("15169").unwrap(), QueryType::Autnum);
+        assert_eq!(
+            RdapRequest::detect_type("example.com").unwrap(),
+            QueryType::Domain
+        );
+        assert_eq!(
+            RdapRequest::detect_type("192.0.2.1").unwrap(),
+            QueryType::Ip
+        );
+        assert_eq!(
+            RdapRequest::detect_type("2001:db8::1").unwrap(),
+            QueryType::Ip
+        );
+        assert_eq!(
+            RdapRequest::detect_type("AS15169").unwrap(),
+            QueryType::Autnum
+        );
+        assert_eq!(
+            RdapRequest::detect_type("15169").unwrap(),
+            QueryType::Autnum
+        );
     }
 }

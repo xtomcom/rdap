@@ -90,25 +90,27 @@ impl RdapClient {
             match self.fetch_rdap(&url).await {
                 Ok(obj) => {
                     // For domain queries (not TLD), try to follow registrar referral
-                    if self.follow_referral && request.query_type == QueryType::Domain
+                    if self.follow_referral
+                        && request.query_type == QueryType::Domain
                         && let RdapObject::Domain(ref domain) = obj
-                            && let Some(registrar_rdap_url) = self.extract_registrar_rdap_url(domain) {
-                                log::debug!("Following registrar referral: {}", registrar_rdap_url);
-                                match self.fetch_rdap(&registrar_rdap_url).await {
-                                    Ok(registrar_obj) => {
-                                        return Ok(RdapQueryResult {
-                                            registry: obj,
-                                            registry_url: url,
-                                            registrar: Some(registrar_obj),
-                                            registrar_url: Some(registrar_rdap_url),
-                                        });
-                                    }
-                                    Err(e) => {
-                                        log::warn!("Failed to fetch registrar data: {}", e);
-                                        // Continue with registry-only result
-                                    }
-                                }
+                        && let Some(registrar_rdap_url) = self.extract_registrar_rdap_url(domain)
+                    {
+                        log::debug!("Following registrar referral: {}", registrar_rdap_url);
+                        match self.fetch_rdap(&registrar_rdap_url).await {
+                            Ok(registrar_obj) => {
+                                return Ok(RdapQueryResult {
+                                    registry: obj,
+                                    registry_url: url,
+                                    registrar: Some(registrar_obj),
+                                    registrar_url: Some(registrar_rdap_url),
+                                });
                             }
+                            Err(e) => {
+                                log::warn!("Failed to fetch registrar data: {}", e);
+                                // Continue with registry-only result
+                            }
+                        }
+                    }
                     return Ok(RdapQueryResult {
                         registry: obj,
                         registry_url: url,
@@ -133,19 +135,22 @@ impl RdapClient {
         // This is the standard way registries indicate the registrar's RDAP server
         for link in &domain.links {
             if let Some(ref rel) = link.rel
-                && rel == "related" {
-                    // Check if it's an RDAP link
-                    if let Some(ref link_type) = link.link_type
-                        && (link_type.contains("rdap") || link_type.contains("json"))
-                            && let Ok(url) = Url::parse(&link.href) {
-                                return Some(url);
-                            }
-                    // Also try if href looks like an RDAP URL
-                    if link.href.contains("/domain/")
-                        && let Ok(url) = Url::parse(&link.href) {
-                            return Some(url);
-                        }
+                && rel == "related"
+            {
+                // Check if it's an RDAP link
+                if let Some(ref link_type) = link.link_type
+                    && (link_type.contains("rdap") || link_type.contains("json"))
+                    && let Ok(url) = Url::parse(&link.href)
+                {
+                    return Some(url);
                 }
+                // Also try if href looks like an RDAP URL
+                if link.href.contains("/domain/")
+                    && let Ok(url) = Url::parse(&link.href)
+                {
+                    return Some(url);
+                }
+            }
         }
 
         // Also check entities for registrar with RDAP link
@@ -154,10 +159,12 @@ impl RdapClient {
                 for link in &entity.links {
                     if let Some(ref rel) = link.rel {
                         // Look for related links that point to domain RDAP
-                        if rel == "related" && link.href.contains("/domain/")
-                            && let Ok(url) = Url::parse(&link.href) {
-                                return Some(url);
-                            }
+                        if rel == "related"
+                            && link.href.contains("/domain/")
+                            && let Ok(url) = Url::parse(&link.href)
+                        {
+                            return Some(url);
+                        }
                     }
                 }
             }
@@ -226,9 +233,13 @@ impl RdapClient {
                 match class_name {
                     "domain" => return Ok(RdapObject::Domain(serde_json::from_value(value)?)),
                     "entity" => return Ok(RdapObject::Entity(serde_json::from_value(value)?)),
-                    "nameserver" => return Ok(RdapObject::Nameserver(serde_json::from_value(value)?)),
+                    "nameserver" => {
+                        return Ok(RdapObject::Nameserver(serde_json::from_value(value)?));
+                    }
                     "autnum" => return Ok(RdapObject::Autnum(serde_json::from_value(value)?)),
-                    "ip network" => return Ok(RdapObject::IpNetwork(serde_json::from_value(value)?)),
+                    "ip network" => {
+                        return Ok(RdapObject::IpNetwork(serde_json::from_value(value)?));
+                    }
                     _ => {}
                 }
             }
@@ -236,7 +247,9 @@ impl RdapClient {
             // Default to Help
             Ok(RdapObject::Help(serde_json::from_value(value)?))
         } else {
-            Err(RdapError::Json(serde::de::Error::custom("Invalid RDAP response")))
+            Err(RdapError::Json(serde::de::Error::custom(
+                "Invalid RDAP response",
+            )))
         }
     }
 }
