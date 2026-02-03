@@ -2,7 +2,7 @@
 
 A modern, elegant RDAP (Registration Data Access Protocol) client written in Rust with beautiful colored output.
 
-Forked from [xtomcom/rdap](https://github.com/xtomcom/rdap), add more features and fix bugs.
+Forked from [Akaere-NetWorks/rdap](https://github.com/Akaere-NetWorks/rdap), add more features and fix bugs.
 
 ## Features
 
@@ -18,7 +18,9 @@ Forked from [xtomcom/rdap](https://github.com/xtomcom/rdap), add more features a
 
 🔍 **Full RDAP Support**
 - Domain queries
+- TLDs queries
 - IP address queries (IPv4/IPv6)
+- IP CIDR queries (IPv4/IPv6)
 - AS number queries
 - Entity queries
 - Nameserver queries
@@ -54,6 +56,24 @@ sudo cp target/release/rdap /usr/local/bin/
 
 ```bash
 cargo install rdap
+```
+
+### Debian / Ubuntu
+
+```bash
+# Add xTom repository
+curl -fsSL https://repo.xtom.com/xtom.key | sudo gpg --dearmor -o /usr/share/keyrings/xtom.gpg
+echo "deb [signed-by=/usr/share/keyrings/xtom.gpg] https://repo.xtom.com/deb stable main" | sudo tee /etc/apt/sources.list.d/xtom.list
+sudo apt update
+sudo apt install rdap
+```
+
+### RHEL / CentOS / Rocky / Alma / Fedora
+
+```bash
+# Add xTom repository
+sudo curl -o /etc/yum.repos.d/xtom.repo https://repo.xtom.com/rpm/xtom.repo
+sudo dnf install rdap
 ```
 
 ## Usage
@@ -101,6 +121,9 @@ rdap -s https://rdap.verisign.com/com/v1 example.com
 rdap -f json example.com
 rdap -f json-pretty example.com
 
+# JSON output from registry (default uses registrar data for domain queries)
+rdap -f json --json-source registry example.com
+
 # Set custom timeout (in seconds)
 rdap --timeout 60 example.com
 
@@ -123,30 +146,80 @@ rdap -u
 ### Domain Query
 
 ```bash
-$ rdap example.com
+$ rdap google.com
 
-Domain Name: EXAMPLE.COM
-Handle: 2336799_DOMAIN_COM-VRSN
+Abuse contact for `google.com` is `abusecomplaints@markmonitor.com`
+
+Query from https://rdap.verisign.com/com/v1/domain/google.com
+
+Domain Name: GOOGLE.COM
+Handle: 2138514_DOMAIN_COM-VRSN
 Object Class: domain
 Status: client delete prohibited
 Status: client transfer prohibited
 Status: client update prohibited
-Nameserver: A.IANA-SERVERS.NET
-Nameserver: B.IANA-SERVERS.NET
-Delegation Signed: yes
-DS Key Tag: 370
-DS Algorithm: 13
-DS Digest Type: 2
-DS Digest: BE74359954660069D5C63D200C39F5603827D7DD02B56F120EE9F3A86764247C
-Registration: 1995-08-14T04:00:00Z
-Expiration: 2026-08-13T04:00:00Z
-Last Changed: 2025-08-14T07:01:39Z
-Last Update: 2025-11-04T20:54:25Z
+Status: server delete prohibited
+Status: server transfer prohibited
+Status: server update prohibited
+Nameserver: NS1.GOOGLE.COM
+Nameserver: NS2.GOOGLE.COM
+Nameserver: NS3.GOOGLE.COM
+Nameserver: NS4.GOOGLE.COM
+Delegation Signed: no
+Registration: 1997-09-15T04:00:00Z
+Expiration: 2028-09-14T04:00:00Z
+Last Changed: 2019-09-09T15:39:04Z
+Last Update: 2026-02-03T10:25:50Z
 
-Entity Handle: 376
+Entity Handle: 292
 Role: registrar
-Name: RESERVED-Internet Assigned Numbers Authority
-IANA Registrar ID: 376
+Name: MarkMonitor Inc.
+IANA Registrar ID: 292
+
+Query from https://rdap.markmonitor.com/rdap/domain/GOOGLE.COM
+
+Domain Name: google.com
+Handle: 2138514_DOMAIN_COM-VRSN
+Object Class: domain
+Port43: whois.markmonitor.com
+Status: client update prohibited
+Status: client transfer prohibited
+Status: client delete prohibited
+Status: server update prohibited
+Status: server transfer prohibited
+Status: server delete prohibited
+Nameserver: ns1.google.com
+Nameserver: ns2.google.com
+Nameserver: ns3.google.com
+Nameserver: ns4.google.com
+Delegation Signed: no
+registrar expiration: 2028-09-14T07:00:00.000+00:00
+Expiration: 2028-09-13T07:00:00.000+00:00
+Registration: 1997-09-15T07:00:00.000+00:00
+Last Changed: 2024-08-02T02:17:33.000+00:00
+Last Update: 2026-02-03T10:21:36.000+00:00
+
+Role: registrant
+Name: REDACTED REGISTRANT
+Organization: Google LLC
+Email: REDACTED FOR PRIVACY
+Phone: REDACTED FOR PRIVACY
+Street: REDACTED FOR PRIVACY
+Locality: REDACTED FOR PRIVACY
+Postal Code: REDACTED FOR PRIVACY
+last changed: 2017-12-11T15:40:13.000+00:00
+Role: technical
+last changed: 2017-12-11T15:40:13.000+00:00
+Entity Handle: 292
+Role: registrar
+Name: Markmonitor Inc.
+Organization: Markmonitor Inc.
+Street: 3540 E Longwing Ln
+Locality: Meridian
+Region: ID
+Postal Code: 83646
+IANA Registrar ID: 292
+Link: https://rdap.markmonitor.com/rdap/domain/google.com
 ```
 
 ### TLD Query
@@ -154,20 +227,27 @@ IANA Registrar ID: 376
 ```bash
 $ rdap google
 
+Administrative contact for `google` is `iana-contact@google.com`
+
+Technical contact for `google` is `crr-tech@google.com`
+
+Query from https://rdap.iana.org/domain/google
+
 Domain Name: google
 Object Class: domain
 Status: active
 Nameserver: ns-tld1.charlestonroadregistry.com (216.239.32.105, 2001:4860:4802:32::69)
 Nameserver: ns-tld2.charlestonroadregistry.com (216.239.34.105, 2001:4860:4802:34::69)
-...
+Nameserver: ns-tld3.charlestonroadregistry.com (216.239.36.105, 2001:4860:4802:36::69)
+Nameserver: ns-tld4.charlestonroadregistry.com (216.239.38.105, 2001:4860:4802:38::69)
+Nameserver: ns-tld5.charlestonroadregistry.com (216.239.60.105, 2001:4860:4805::69)
 Delegation Signed: yes
+DS Key Tag: 6125
+DS Algorithm: 8
+DS Digest Type: 2
+DS Digest: 80F8B78D23107153578BAD3800E9543500474E5C30C29698B40A3DB23ED9DA9F
+Last Changed: 2025-04-11T00:00:00+00:00
 Registration: 2014-09-04T00:00:00+00:00
-
-Role: registrant
-Name: Charleston Road Registry Inc.
-Address: 1600 Amphitheatre Parkway
-Mountain View CA 94043
-United States of America (the)
 ```
 
 ### IP Query (with CIDR support)
@@ -184,12 +264,21 @@ Start Address: 8.8.8.0
 End Address: 8.8.8.255
 IP Version: v4
 Name: GOGL
-...
+Type: DIRECT ALLOCATION
+Parent Handle: NET-8-0-0-0-0
+Status: active
+Port43: whois.arin.net
+last changed: 2023-12-28T17:24:56-05:00
+registration: 2023-12-28T17:24:33-05:00
 ```
 ### IP Query
 
 ```bash
 $ rdap 8.8.8.8
+
+Abuse contact for `8.8.8.8` is `network-abuse@google.com`
+
+Query from https://rdap.arin.net/registry/ip/8.8.8.8
 
 Handle: NET-8-8-8-0-2
 Start Address: 8.8.8.0
@@ -202,94 +291,183 @@ Status: active
 Port43: whois.arin.net
 last changed: 2023-12-28T17:24:56-05:00
 registration: 2023-12-28T17:24:33-05:00
-
-Entity Handle: GOGL
-Role: registrant
-Name: Google LLC
-Port43: whois.arin.net
-last changed: 2019-10-31T15:45:45-04:00
-registration: 2000-03-30T00:00:00-05:00
 ```
 
 ### AS Number Query
 
 ```bash
-$ rdap AS213605
+$ rdap AS8888
 
-AS Number: AS213605
-Name: Pysio-Research-NetWork
-Handle: AS213605
+Abuse contact for `AS8888` is `abuse@xtom.com`
+
+Query from https://rdap.db.ripe.net/autnum/8888
+
+AS Number: AS8888
+Name: XTOM
+Handle: AS8888
 Object Class: autnum
 Status: active
 Port43: whois.ripe.net
-Registration: 2025-01-10T12:53:39Z
-Last Changed: 2025-10-14T13:21:47Z
+Registration: 1970-01-01T00:00:00Z
+Last Changed: 2024-08-17T11:00:40Z
 
-Entity Handle: LA9082-RIPE
-Role: administrative
-Role: technical
-Role: abuse
-Name: LiuHaoRan
-Email: team@pysio.online
-Phone: +86 19934273163
-Link: https://rdap.db.ripe.net/entity/LA9082-RIPE
+Entity Handle: ORG-XPL3-RIPE
+Role: registrant
+Name: xTom Pty Ltd
+Phone: +61280066886
+Address: 81 Campbell St
+2010
+Surry Hills
+AUSTRALIA
+Link: https://rdap.db.ripe.net/entity/ORG-XPL3-RIPE
 ```
 
 ### Entity Query
 
 ```bash
-$ rdap -s https://rdap.db.ripe.net -t entity LA9082-RIPE
+$ rdap -s https://rdap.db.ripe.net -t entity XTOM-RIPE
 
-Entity Handle: LA9082-RIPE
-Role: administrative
-Role: technical
-Role: abuse
-Name: LiuHaoRan
-Email: team@pysio.online
-Phone: +86 19934273163
+Query from https://rdap.db.ripe.net/entity/XTOM-RIPE
+
+Entity Handle: XTOM-RIPE
+Name: xTom Global NOC
+Email: abuse@xtom.com
+Phone: +49 21197635976
+Address: Kreuzstr.60
+40210 Duesseldorf
+Germany
 Port43: whois.ripe.net
-registration: 2020-01-15T10:30:00Z
-last changed: 2025-01-06T08:29:19Z
-Link: https://rdap.db.ripe.net/entity/LA9082-RIPE
+registration: 2021-08-05T13:48:15Z
+last changed: 2021-10-27T10:21:57Z
+Link: https://rdap.db.ripe.net/entity/XTOM-RIPE
+
+Entity Handle: xtom
+Role: registrant
+Name: xtom
+Organization: ORG-XG42-RIPE
+Link: https://rdap.db.ripe.net/entity/xtom
 ```
 
 ### Verbose Output
 
 ```bash
-$ rdap -v AS213605
+$ rdap -v AS8888
 
-→ Query: AS213605
+→ Query: AS8888
 → Type:  autnum
 
 ⟳ Querying RDAP server...
 
-AS Number: AS213605
-Name: Pysio-Research-NetWork
-Handle: AS213605
+
+Abuse contact for `AS8888` is `abuse@xtom.com`
+
+Query from https://rdap.db.ripe.net/autnum/8888
+
+AS Number: AS8888
+Name: XTOM
+Handle: AS8888
 Object Class: autnum
 Status: active
 Port43: whois.ripe.net
-Registration: 2025-01-10T12:53:39Z
-Last Changed: 2025-10-14T13:21:47Z
+Registration: 1970-01-01T00:00:00Z
+Last Changed: 2024-08-17T11:00:40Z
 
-Entity Handle: LA9082-RIPE
+Entity Handle: ORG-XPL3-RIPE
+Role: registrant
+Name: xTom Pty Ltd
+Phone: +61280066886
+Address: 81 Campbell St
+2010
+Surry Hills
+AUSTRALIA
+Link: https://rdap.db.ripe.net/entity/ORG-XPL3-RIPE
+Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
+
+Entity Handle: RIPE-NCC-END-MNT
+Role: registrant
+Name: RIPE-NCC-END-MNT
+Organization: ORG-NCC1-RIPE
+Link: https://rdap.db.ripe.net/entity/RIPE-NCC-END-MNT
+Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
+
+Entity Handle: XTAU-RIPE
 Role: administrative
 Role: technical
 Role: abuse
-Name: LiuHaoRan
-Email: team@pysio.online
-Phone: +86 19934273163
-Link: https://rdap.db.ripe.net/entity/LA9082-RIPE
+Name: xTom Global NOC
+Email: abuse@xtom.com
+Phone: +61 2 8006 6886
+Address: 81 Campbell St
+Surry Hills 2010 NSW
+Australia
+Link: https://rdap.db.ripe.net/entity/XTAU-RIPE
 Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
 
+Entity Handle: xtom
+Role: registrant
+Name: xtom
+Organization: ORG-XG42-RIPE
+Link: https://rdap.db.ripe.net/entity/xtom
+Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
+
+Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-up/AS8888 (rdap-up)
+Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-up/AS8888?status=active (rdap-up rdap-active)
+Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-down/AS8888 (rdap-down)
+Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-top/AS8888 (rdap-top)
+Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-top/AS8888?status=active (rdap-top rdap-active)
+Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-bottom/AS8888 (rdap-bottom)
+Link: https://rdap.db.ripe.net/autnum/8888 (self)
+Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
+  xTom Pty Ltd
+  
+  ========================================================
+  ===== X X TTTTT OOO M M =====
+  ===== X X T O O MM MM =====
+  ===== X T O O M M M M =====
+  ===== X X T O O M M M =====
+  ===== X X T OOO M M =====
+  ============== BGP COMMUNITY SUPPORT ===================
+  ===== 8888:3002 learned from EQUINIX SYDNEY ====
+  ===== 8888:3003 learned from CT (AS4134) ====
+  ===== 8888:3004 learned from CU (AS10099) ====
+  ===== 8888:3005 learned from CT2 (AS4809) ====
+  ===== 8888:3006 learned from GSL (AS137409) ====
+  ===== 8888:110x Prepend routes to EQUINIX SYDNEY ====
+  ===== 8888:120x Prepend routes to CT (AS4134) ====
+  ===== 8888:130x Prepend routes to CU (AS10099) ====
+  ===== 8888:140x Prepend routes to CT2 (AS4809) ====
+  ===== 8888:150x Prepend routes to GSL (AS137409) ====
+  ===== 8888:666 Blackhole Community ====
+  ==================== LIST OF CONTENTS ==================
+  ===== x=1,2,3 for prepends ====
+  ===== x=0 for DO NOT announce ====
+  ===== x=4 for DO NOT announce Route Servers ====
+  ===== x=5 for DO NOT announce Transits ====
+  ==================== Contacts ==========================
+  ===== Network noc@xtom.com ====
+  ===== Peering peering@xtom.com ====
+  ===== Abuse abuse@xtom.com ====
+  ===== Website https://xtom.com ====
 Notice: Filtered
   This output has been filtered.
+Notice: Whois Inaccuracy Reporting
+  If you see inaccuracies in the results, please visit:
+  Link: https://www.ripe.net/contact-form?topic=ripe_dbm&show_form=true
 Notice: Source
   Objects returned came from source
   RIPE
 Notice: Terms and Conditions
   This is the RIPE Database query service. The objects are in RDAP format.
   Link: http://www.ripe.net/db/support/db-terms-conditions.pdf
+
+RDAP Conformance:
+  nro_rdap_profile_asn_flat_0
+  rirSearch1
+  autnums
+  cidr0
+  rdap_level_0
+  nro_rdap_profile_0
+  redacted
 ```
 
 ## Library Usage
@@ -720,6 +898,7 @@ src/
 ├── request.rs       # Request builder
 ├── bootstrap.rs     # Bootstrap service discovery
 ├── cache.rs         # Bootstrap cache
+├── ip.rs            # IP address normalization and CIDR handling
 └── display.rs       # Pretty output formatting
 
 config/
@@ -763,7 +942,6 @@ xTom & Akaere Networks
 
 ## Links
 
-- Original Go version: https://github.com/openrdap/rdap
 - Original Go version: https://github.com/openrdap/rdap
 - IANA RDAP Bootstrap: https://data.iana.org/rdap/
 - RDAP Working Group: https://datatracker.ietf.org/wg/weirds/

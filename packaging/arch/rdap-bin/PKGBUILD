@@ -1,0 +1,19 @@
+# Maintainer: xTom <packages@xtom.com>
+pkgname=rdap-bin
+pkgver=1.0.1
+pkgrel=1
+pkgdesc="A modern RDAP (Registration Data Access Protocol) client - prebuilt binary"
+arch=('x86_64' 'aarch64')
+url="https://github.com/xtomcom/rdap"
+license=('MIT')
+depends=('gcc-libs')
+provides=('rdap')
+conflicts=('rdap')
+source_x86_64=("rdap-$pkgver-x86_64.tar.xz::https://github.com/xtomcom/rdap/releases/download/v$pkgver/rdap-v$pkgver.x86_64-unknown-linux-gnu.tar.xz")
+source_aarch64=("rdap-$pkgver-aarch64.tar.xz::https://github.com/xtomcom/rdap/releases/download/v$pkgver/rdap-v$pkgver.aarch64-unknown-linux-gnu.tar.xz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    install -Dm0755 "rdap" "$pkgdir/usr/bin/rdap"
+}

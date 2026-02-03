@@ -1,6 +1,6 @@
 [package]
 name = "rdap"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 authors = ["xTom", "Akaere Networks"]
 description = "A modern RDAP (Registration Data Access Protocol) client"

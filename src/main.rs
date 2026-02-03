@@ -40,6 +40,10 @@ struct Cli {
     #[arg(long)]
     no_referral: bool,
 
+    /// JSON output source: registry or registrar (default: registrar)
+    #[arg(long, default_value = "registrar")]
+    json_source: JsonSource,
+
     /// Update configuration files from GitHub (config.json and tlds.json)
     #[arg(short = 'u', long)]
     update: bool,
@@ -91,6 +95,14 @@ enum OutputFormat {
     JsonPretty,
 }
 
+#[derive(Debug, Clone, ValueEnum)]
+enum JsonSource {
+    /// Use registry data (from TLD registry like Verisign)
+    Registry,
+    /// Use registrar data if available, fallback to registry (default)
+    Registrar,
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -116,14 +128,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Load TLD list for query type detection
     let tld_list = rdap::config::TldList::load().ok();
 
-    // Normalize IP addresses (handles shorthand like 1.1 -> 1.0.0.1)
-    if rdap::ip::is_ip_like(&query)
-        && let Some(normalized) = rdap::ip::normalize_ip(&query)
-    {
-        query = normalized;
-    }
-
-    // Detect or use specified query type
+    // Detect or use specified query type (BEFORE IP normalization)
     let query_type = if let Some(qt) = cli.query_type {
         qt.into()
     } else {
@@ -131,6 +136,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             tld_list.as_ref().is_some_and(|list| list.is_tld(q))
         })?
     };
+
+    // Normalize IP addresses only if it's an IP query (handles shorthand like 1.1 -> 1.0.0.1)
+    if query_type == QueryType::Ip
+        && let Some(normalized) = rdap::ip::normalize_ip(&query)
+    {
+        query = normalized;
+    }
 
     if cli.verbose {
         eprintln!("{} Query: {}", "→".bright_blue(), query.bright_white());
@@ -172,6 +184,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Display result
     match cli.format {
         OutputFormat::Text => {
+            println!(); // Empty line before output
             // For domain queries with registrar data, show both
             if query_result.registrar.is_some() && query_type == QueryType::Domain {
                 // Show abuse contact from registrar first (if available)
@@ -234,19 +247,24 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         OutputFormat::Json => {
-            // For JSON output, prefer registrar data if available
-            let result = query_result
-                .registrar
-                .as_ref()
-                .unwrap_or(&query_result.registry);
+            let result = match cli.json_source {
+                JsonSource::Registry => &query_result.registry,
+                JsonSource::Registrar => query_result
+                    .registrar
+                    .as_ref()
+                    .unwrap_or(&query_result.registry),
+            };
             let json = serde_json::to_string(result)?;
             println!("{json}");
         }
         OutputFormat::JsonPretty => {
-            let result = query_result
-                .registrar
-                .as_ref()
-                .unwrap_or(&query_result.registry);
+            let result = match cli.json_source {
+                JsonSource::Registry => &query_result.registry,
+                JsonSource::Registrar => query_result
+                    .registrar
+                    .as_ref()
+                    .unwrap_or(&query_result.registry),
+            };
             let json = serde_json::to_string_pretty(result)?;
             println!("{json}");
         }

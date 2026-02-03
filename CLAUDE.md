@@ -44,10 +44,7 @@ This is an RDAP (Registration Data Access Protocol) client written in Rust, impl
 - **`src/config.rs`** - Configuration management with priority loading (local > user > system > builtin)
 - **`src/display.rs`** - `RdapDisplay` and `RdapDisplayWithQuery` traits - colored terminal output formatting, abuse contact display
 - **`src/cache.rs`** - Bootstrap file caching in `~/.cache/rdap/`
-<<<<<<< HEAD
 - **`src/ip.rs`** - IP address utilities: normalization (shorthand → standard), CIDR detection/parsing
-=======
->>>>>>> a367f2a4778627b8efe8d658b31c5f732bdf77da
 - **`src/models/`** - RDAP data models (Domain, Entity, Autnum, IpNetwork, Nameserver, etc.)
 
 ### Configuration System
@@ -69,22 +66,19 @@ Config files in `config/` directory are embedded into the binary at compile time
 
 ### Query Flow
 
-<<<<<<< HEAD
 1. User provides query string (domain, TLD, IP, CIDR, AS number)
-2. For IP queries: `ip::normalize_ip()` normalizes shorthand IPs (1.1 → 1.0.0.1)
-3. `RdapRequest::detect_type_with_tld_check()` auto-detects query type:
-=======
-1. User provides query string (domain, TLD, IP, AS number)
 2. `RdapRequest::detect_type_with_tld_check()` auto-detects query type:
->>>>>>> a367f2a4778627b8efe8d658b31c5f732bdf77da
+   - Pure numbers → `QueryType::Autnum` (AS number)
    - Checks if single word matches IANA TLD list (from `tlds.txt`) → `QueryType::Tld`
-   - Routes TLD queries to `rdap.iana.org`
-3. For domains: Check TLD overrides from `tlds.json` first, then IANA bootstrap
-4. `BootstrapClient` fetches IANA bootstrap registry to find authoritative RDAP server
-5. `RdapClient` sends HTTP request with `Accept: application/rdap+json`
-6. Response is parsed into appropriate `RdapObject` variant based on `objectClassName`
-7. For domain queries: Follow registrar referral link for multi-layer RDAP data
-8. Result is displayed via `RdapDisplay` trait (with abuse contact for IP/ASN) or serialized to JSON
+   - IP-like patterns → `QueryType::Ip`
+   - Otherwise → `QueryType::Domain`
+3. For IP queries: `ip::normalize_ip()` normalizes shorthand IPs (1.1 → 1.0.0.1)
+4. For domains: Check TLD overrides from `tlds.json` first, then IANA bootstrap
+5. `BootstrapClient` fetches IANA bootstrap registry to find authoritative RDAP server
+6. `RdapClient` sends HTTP request with `Accept: application/rdap+json`
+7. Response is parsed into appropriate `RdapObject` variant based on `objectClassName`
+8. For domain queries: Follow registrar referral link for multi-layer RDAP data
+9. Result is displayed via `RdapDisplay` trait (with abuse contact for IP/ASN) or serialized to JSON
 
 ### Key Types
 
@@ -107,7 +101,4 @@ Config files in `config/` directory are embedded into the binary at compile time
 - `serde` + `serde_json` - JSON serialization
 - `clap` - CLI parsing with subcommands
 - `colored` + `comfy-table` - terminal output formatting
-<<<<<<< HEAD
 - `ipnet` - IP network/CIDR parsing and matching
-=======
->>>>>>> a367f2a4778627b8efe8d658b31c5f732bdf77da

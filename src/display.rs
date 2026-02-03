@@ -356,11 +356,12 @@ impl RdapDisplayWithQuery for IpNetwork {
         }
 
         if let Some(ip_ver) = &self.ip_version {
-            println!(
-                "{}: {}",
-                "IP Version".white(),
-                format!("v{ip_ver}").normal()
-            );
+            let version = if ip_ver.starts_with('v') {
+                ip_ver.to_string()
+            } else {
+                format!("v{ip_ver}")
+            };
+            println!("{}: {}", "IP Version".white(), version.normal());
         }
 
         if let Some(name) = &self.name {
