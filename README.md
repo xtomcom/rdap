@@ -835,7 +835,7 @@ async fn query_handler(
 The RDAP client uses a configuration system with the following priority (highest to lowest):
 
 1. `~/.config/rdap/*.local.json` - User local overrides (never overwritten by updates)
-2. `~/.config/rdap/*.json` - Downloaded configs (updated via `rdap update`)
+2. `~/.config/rdap/*.json` - Downloaded configs (updated via `rdap --update`)
 3. `/etc/rdap/*.json` - System-wide configs
 4. Built-in defaults (embedded in binary)
 
