@@ -215,4 +215,4 @@ jobs:
           REMOTE_USER: ${{ secrets.REMOTE_USER }}
           SOURCE: "repo/"
           TARGET: ${{ env.REPO_PATH }}/
-          ARGS: "-avz --delete"
+          ARGS: "-avz"
