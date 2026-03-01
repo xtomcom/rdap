@@ -203,4 +203,20 @@ mod tests {
             QueryType::Autnum
         );
     }
+
+    #[test]
+    fn test_build_url_ipv6() {
+        let base = Url::parse("https://rdap.apnic.net/").unwrap();
+        let req = RdapRequest::new(QueryType::Ip, "2001:db8::1");
+        let url = req.build_url(&base).unwrap();
+        assert_eq!(url.as_str(), "https://rdap.apnic.net/ip/2001:db8::1");
+    }
+
+    #[test]
+    fn test_build_url_ipv4() {
+        let base = Url::parse("https://rdap.arin.net/registry/").unwrap();
+        let req = RdapRequest::new(QueryType::Ip, "8.8.8.8");
+        let url = req.build_url(&base).unwrap();
+        assert_eq!(url.as_str(), "https://rdap.arin.net/registry/ip/8.8.8.8");
+    }
 }

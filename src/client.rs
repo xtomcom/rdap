@@ -2,9 +2,11 @@
 
 use crate::bootstrap::BootstrapClient;
 use crate::error::{RdapError, Result};
+use crate::ip;
 use crate::models::{Domain, RdapObject};
 use crate::request::{QueryType, RdapRequest};
 use reqwest::Client;
+use std::net::IpAddr;
 use std::time::Duration;
 use url::Url;
 
@@ -68,6 +70,64 @@ impl RdapClient {
 
     /// Execute an RDAP request with registrar referral support
     pub async fn query_with_referral(&self, request: &RdapRequest) -> Result<RdapQueryResult> {
+        // Try the original query first
+        match self.query_servers(request).await {
+            Ok(result) => return Ok(result),
+            Err(ref e) if self.should_retry_with_cidr(request, e) => {
+                // For IPv6 host queries that get 400, retry with CIDR prefixes
+                // Some RDAP servers (e.g., TWNIC) don't support host-level IPv6 queries
+                for prefix_len in &[64u8, 48, 32] {
+                    if let Some(cidr_query) = self.make_cidr_query(request, *prefix_len) {
+                        log::info!(
+                            "Retrying with CIDR prefix /{prefix_len}: {}",
+                            cidr_query.query
+                        );
+                        if let Ok(result) = self.query_servers(&cidr_query).await {
+                            return Ok(result);
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+
+        // All attempts failed, return the original error
+        self.query_servers(request).await
+    }
+
+    /// Check if we should retry an IPv6 query with CIDR notation
+    fn should_retry_with_cidr(&self, request: &RdapRequest, error: &RdapError) -> bool {
+        if request.query_type != QueryType::Ip {
+            return false;
+        }
+        // Only retry for non-CIDR IPv6 queries that got a 400
+        if ip::is_cidr(&request.query) {
+            return false;
+        }
+        if !request.query.contains(':') {
+            return false;
+        }
+        matches!(error, RdapError::ServerError { code: 400, .. })
+    }
+
+    /// Create a CIDR query from a host IPv6 address
+    fn make_cidr_query(&self, request: &RdapRequest, prefix_len: u8) -> Option<RdapRequest> {
+        let addr: IpAddr = request.query.parse().ok()?;
+        if let IpAddr::V6(v6) = addr {
+            let bits = u128::from(v6);
+            let mask = !((1u128 << (128 - prefix_len)) - 1);
+            let network = std::net::Ipv6Addr::from(bits & mask);
+            let cidr = format!("{network}/{prefix_len}");
+            let mut new_request = RdapRequest::new(QueryType::Ip, cidr);
+            new_request.server = request.server.clone();
+            Some(new_request)
+        } else {
+            None
+        }
+    }
+
+    /// Try querying all available servers for a request
+    async fn query_servers(&self, request: &RdapRequest) -> Result<RdapQueryResult> {
         // Determine RDAP servers
         let urls = if let Some(server) = &request.server {
             vec![server.clone()]
