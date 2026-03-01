@@ -54,12 +54,40 @@ sudo cp target/release/rdap /usr/local/bin/
 
 ### Debian / Ubuntu
 
+Debian (via extrepo):
+
 ```bash
+sudo apt update && sudo apt install extrepo -y
+sudo extrepo enable xtom
+sudo apt update && sudo apt install rdap -y
+```
+
+One-Line Style:
+
+```bash
+sudo apt install -y lsb-release ca-certificates apt-transport-https curl gnupg dpkg
 # Add xTom repository
-curl -fsSL https://repo.xtom.com/xtom.key | sudo gpg --dearmor -o /usr/share/keyrings/xtom.gpg
+curl -fsSL https://repo.xtom.com/xtom.key | bash -c 'gpg --dearmor > /usr/share/keyrings/xtom.gpg'
 echo "deb [signed-by=/usr/share/keyrings/xtom.gpg] https://repo.xtom.com/deb stable main" | sudo tee /etc/apt/sources.list.d/xtom.list
 sudo apt update
 sudo apt install rdap
+```
+
+DEB822:
+
+```bash
+sudo apt install -y lsb-release ca-certificates apt-transport-https curl gnupg dpkg
+curl -fsSL https://repo.xtom.com/xtom.key | bash -c 'gpg --dearmor > /usr/share/keyrings/xtom.gpg'
+sudo bash -c 'cat > /etc/apt/sources.list.d/xtom.sources << EOF
+Components: main
+Architectures: $(dpkg --print-architecture)
+Suites: stable
+Types: deb
+Uris: https://repo.xtom.com/deb
+Signed-By: /usr/share/keyrings/xtom.gpg
+EOF'
+sudo apt update
+sudo apt install rdap -y
 ```
 
 ### RHEL / CentOS / Rocky / Alma / Fedora
@@ -68,6 +96,14 @@ sudo apt install rdap
 # Add xTom repository
 sudo curl -o /etc/yum.repos.d/xtom.repo https://repo.xtom.com/rpm/xtom.repo
 sudo dnf install rdap
+```
+
+### macOS
+
+```bash
+# Install Homebrew https://brew.sh/
+brew tap xtomcom/brew
+brew install xtomcom/brew/rdap
 ```
 
 ## Usage
