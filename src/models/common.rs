@@ -2,6 +2,38 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Deserialize a field that can be either a single string or an array of strings
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or an array of strings")
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Vec<String>, E> {
+            Ok(vec![value.to_owned()])
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
+            let mut vec = Vec::new();
+            while let Some(val) = seq.next_element()? {
+                vec.push(val);
+            }
+            Ok(vec)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
+}
+
 /// Link to related resources
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Link {
@@ -13,7 +45,7 @@ pub struct Link {
 
     pub href: String,
 
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     pub hreflang: Vec<String>,
 
     #[serde(default)]
