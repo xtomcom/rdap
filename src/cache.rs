@@ -23,7 +23,7 @@ impl Cache {
 
         Ok(Self {
             cache_dir,
-            ttl: Duration::from_secs(24 * 3600), // 24 hours
+            ttl: Duration::from_hours(24),
         })
     }
 
