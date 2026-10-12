@@ -111,5 +111,18 @@
   "us": "https://rdap.nic.us/",
   "v.ua": "https://rdap.v.ua/",
   "ve": "https://rdap.nic.ve/rdap/",
-  "vu": "https://rdap.dnrs.vu/"
+  "vu": "https://rdap.dnrs.vu/",
+  "wz.org": "https://rdap.cctld.com/",
+  "wz.io": "https://rdap.cctld.com/",
+  "com.fo": "https://rdap.cctld.com/",
+  "co.fo": "https://rdap.cctld.com/",
+  "co.lu": "https://rdap.cctld.com/",
+  "co.sk": "https://rdap.cctld.com/",
+  "co.ki": "https://rdap.cctld.com/",
+  "co.td": "https://rdap.cctld.com/",
+  "cc.sk": "https://rdap.cctld.com/",
+  "cc.td": "https://rdap.cctld.com/",
+  "cc.ag": "https://rdap.cctld.com/",
+  "cc.je": "https://rdap.cctld.com/",
+  "edu.ax": "https://rdap.cctld.com/"
 }
