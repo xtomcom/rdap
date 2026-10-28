@@ -91,21 +91,49 @@ strip = true
 maintainer = "xTom <packages@xtom.com>"
 copyright = "2026, xTom"
 license-file = ["LICENSE", "0"]
-extended-description = "A modern RDAP client for querying domain, IP, and ASN registration data following RFC 7480-7484."
+extended-description = """\
+A modern RDAP client for querying domain, IP, and ASN registration data following RFC 7480-7484.
+Includes an optional local HTTP API server (rdap.service, disabled by default)."""
 section = "net"
 # Pinned: dpkg-shlibdeps over-reports (>= 2.34) and is skipped for cross builds.
 # ca-certificates: rustls needs the system root store for HTTPS.
 depends = "libc6 (>= 2.17), ca-certificates"
 priority = "optional"
+# Files under /etc are conffiles automatically (kept on upgrade if edited).
+# The env file may hold the API token or proxy credentials, hence 600.
 assets = [
     ["target/release/rdap", "usr/bin/", "755"],
+    ["packaging/rdap.env", "etc/default/rdap", "600"],
 ]
+# Installs packaging/rdap.service with the dh_installsystemd maintainer scripts
+# (daemon-reload, try-restart on upgrade, stop on removal). Never enabled or
+# started on install.
+# cargo-deb only generates those scripts when maintainer-scripts is set.
+maintainer-scripts = "packaging"
+systemd-units = { unit-scripts = "packaging", enable = false, start = false }
 
 # RPM package metadata
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/rdap", dest = "/usr/bin/rdap", mode = "0755" },
+    { source = "packaging/rdap.service", dest = "/usr/lib/systemd/system/rdap.service", mode = "0644" },
+    { source = "packaging/rdap.env", dest = "/etc/default/rdap", mode = "0600", config = "noreplace" },
 ]
+# Like the deb: the service is installed but never enabled or started on install.
+post_install_script = """
+if [ -d /run/systemd/system ]; then systemctl daemon-reload >/dev/null 2>&1 || :; fi
+"""
+pre_uninstall_script = """
+if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
+    systemctl --no-reload disable --now rdap.service >/dev/null 2>&1 || :
+fi
+"""
+post_uninstall_script = """
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+    if [ "$1" -ge 1 ]; then systemctl try-restart rdap.service >/dev/null 2>&1 || :; fi
+fi
+"""
 
 [package.metadata.generate-rpm.requires]
 ca-certificates = "*"

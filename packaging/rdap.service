@@ -1,0 +1,67 @@
+# rdap API server (`rdap --serve`).
+#
+# Not enabled on install. Configure it in /etc/default/rdap, then:
+#   systemctl enable --now rdap
+#
+# Override settings with `systemctl edit rdap` rather than editing this file.
+
+[Unit]
+Description=RDAP API server
+Documentation=https://github.com/xtomcom/rdap#api-server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Settings from the env file override Environment= below. $RDAP_ARGS passes
+# extra flags that have no env var (e.g. --timeout 60 --no-referral).
+Environment=HOME=%S/rdap
+EnvironmentFile=-/etc/default/rdap
+ExecStart=/usr/bin/rdap --serve $RDAP_ARGS
+Restart=on-failure
+RestartSec=5s
+
+# rdap keeps its bootstrap cache in $HOME/.cache/rdap and `--update` configs in
+# $HOME/.config/rdap; both live under the state directory /var/lib/rdap.
+DynamicUser=yes
+StateDirectory=rdap
+StateDirectoryMode=0750
+UMask=0077
+LimitNOFILE=65536
+
+# Sandboxing
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# --interface (SO_BINDTODEVICE) may need CAP_NET_RAW, depending on the kernel.
+# If it fails with "Operation not permitted", add via `systemctl edit rdap`:
+#   [Service]
+#   CapabilityBoundingSet=CAP_NET_RAW
+#   AmbientCapabilities=CAP_NET_RAW
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+# AF_NETLINK: glibc getaddrinfo() uses it to sort IPv4/IPv6 results
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
