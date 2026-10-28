@@ -35,6 +35,13 @@ Forked from [Akaere-NetWorks/rdap](https://github.com/Akaere-NetWorks/rdap), add
 - Disk caching of bootstrap files
 - Configurable timeouts
 
+🌐 **API Server & Networking**
+- `rdap --serve`: local HTTP API server with RDAP-compatible and JSON endpoints
+- Batch queries, abuse contact lookup, in-memory result cache
+- Optional bearer token auth and CORS
+- Outbound proxies (SOCKS5/HTTP), source IP / interface binding, route rotation
+- Docker image and hardened systemd service
+
 ⚙️ **Configuration**
 - Built-in defaults for zero-config usage
 - Configurable bootstrap URLs and TLD overrides
@@ -97,6 +104,15 @@ sudo apt install rdap -y
 sudo curl -o /etc/yum.repos.d/xtom.repo https://repo.xtom.com/rpm/xtom.repo
 sudo dnf install rdap
 ```
+
+### Docker
+
+```bash
+docker build -t rdap https://github.com/xtomcom/rdap.git
+docker run --rm rdap example.com
+```
+
+See [Docker / Compose](#docker--compose) for running the API server.
 
 ### macOS
 
@@ -499,6 +515,330 @@ RDAP Conformance:
   nro_rdap_profile_0
   redacted
 ```
+
+## API Server
+
+`rdap --serve` runs a small HTTP API server. It speaks plain RDAP (RFC 7482 paths), so any RDAP client can use it, and adds JSON endpoints for auto-detected queries, abuse contacts and batches. Bootstrap discovery, registrar referrals and result caching all happen on the server.
+
+### Starting and Stopping
+
+```bash
+# Listen on 127.0.0.1:8888 (default)
+rdap --serve
+
+# Listen on all interfaces, custom port (set a token when you do this)
+RDAP_API_TOKEN=secret rdap --serve --listen 0.0.0.0 --port 9000
+RDAP_API_TOKEN=secret rdap --serve --listen :: --port 9000
+
+# Send every query to one upstream RDAP server instead of using bootstrap
+rdap -s https://rdap.example/ --serve
+```
+
+The server prints its listen address on startup and shuts down gracefully on `Ctrl+C` (SIGINT) or SIGTERM.
+
+### Server Options
+
+Every option can also be set with an environment variable. A command-line flag wins over the variable.
+
+| Flag | Env var | Default | Description |
+|------|---------|---------|-------------|
+| `--serve` | | | Run the API server instead of a single query |
+| `--listen <IP>` | `RDAP_LISTEN` | `127.0.0.1` | Address to listen on (`0.0.0.0` or `::` for all) |
+| `--port <PORT>` | `RDAP_PORT` | `8888` | Port to listen on |
+| `--token <TOKEN>` | `RDAP_API_TOKEN` | none | Require `Authorization: Bearer <TOKEN>` |
+| `--cache-ttl <SECS>` | `RDAP_CACHE_TTL` | `300` | Seconds to cache results, `0` disables the cache |
+| `--cors` | `RDAP_CORS` | off | Send permissive CORS headers (for browser clients) |
+| `--max-batch <N>` | `RDAP_MAX_BATCH` | `100` | Maximum queries per `POST /batch` request |
+
+`-s/--server`, `--timeout`, `-k/--insecure`, `--no-referral` and the [network options](#network-options) also apply to the server. `--max-per-host` defaults to `8` in server mode.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/domain/{name}` | Domain (RDAP) |
+| `GET` | `/ip/{addr}`, `/ip/{addr}/{len}` | IP address or CIDR (RDAP) |
+| `GET` | `/autnum/{asn}` | AS number (RDAP) |
+| `GET` | `/nameserver/{name}` | Nameserver (RDAP) |
+| `GET` | `/entity/{handle}` | Entity (RDAP, needs `-s`) |
+| `GET` | `/help` | RDAP help object for this server |
+| `GET` | `/query/{q}` | Auto-detected query, wrapped in JSON |
+| `GET` | `/abuse/{q}` | Abuse contact email |
+| `POST` | `/batch` | Up to `--max-batch` queries at once |
+| `GET` | `/healthz` | Health check (never needs the token) |
+| `GET` | `/version` | Server name and version |
+
+RDAP endpoints return `Content-Type: application/rdap+json`, everything else `application/json`.
+
+#### RDAP Endpoints
+
+These behave like an RDAP server: the body is the RDAP object itself. For domains the registrar's data is returned when the referral succeeded, otherwise the registry's; add `?source=registry` to always get the registry object.
+
+```bash
+curl http://127.0.0.1:8888/domain/example.com
+curl http://127.0.0.1:8888/domain/example.com?source=registry
+curl http://127.0.0.1:8888/ip/1.1.1.1
+curl http://127.0.0.1:8888/ip/2001:db8::/32
+curl http://127.0.0.1:8888/autnum/13335
+curl http://127.0.0.1:8888/nameserver/ns1.google.com
+curl http://127.0.0.1:8888/help
+```
+
+```json
+{
+  "objectClassName": "ip network",
+  "handle": "1.1.1.0 - 1.1.1.255",
+  "startAddress": "1.1.1.0",
+  "endAddress": "1.1.1.255",
+  "ipVersion": "v4",
+  "name": "APNIC-LABS",
+  "...": "..."
+}
+```
+
+Any RDAP client can point at the server, including this one:
+
+```bash
+rdap -s http://127.0.0.1:8888/ example.com
+```
+
+`/entity/{handle}` and RDAP searches have no bootstrap registry, so they need a fixed upstream (`rdap -s <url> --serve`); without one they return `501`.
+
+#### `GET /query/{q}`
+
+Auto-detects the query type like the CLI: domains, TLDs (`google`), IPs, shorthand IPs (`1.1`), CIDRs, `AS13335` and `13335`.
+
+Query parameters:
+
+- `type` - force a query type (`domain`, `tld`, `ip`, `autnum`, `nameserver`, ...)
+- `source` - `registrar` (default, falls back to the registry), `registry`, or `both`
+
+```bash
+curl http://127.0.0.1:8888/query/1.1
+curl http://127.0.0.1:8888/query/AS13335
+curl 'http://127.0.0.1:8888/query/example.com?source=both'
+```
+
+```json
+{
+  "query": "1.0.0.1",
+  "type": "ip",
+  "source": "registry",
+  "registry_url": "https://rdap.apnic.net/ip/1.0.0.1",
+  "registrar_url": null,
+  "result": { "objectClassName": "ip network", "...": "..." }
+}
+```
+
+With `source=both`, `result` is replaced by both objects:
+
+```json
+{
+  "query": "example.com",
+  "type": "domain",
+  "source": "both",
+  "registry_url": "https://rdap.verisign.com/com/v1/domain/example.com",
+  "registrar_url": "https://rdap.example-registrar.com/domain/example.com",
+  "registry": { "objectClassName": "domain", "...": "..." },
+  "registrar": { "objectClassName": "domain", "...": "..." }
+}
+```
+
+`registrar` is `null` when there was no referral or it failed.
+
+#### `GET /abuse/{q}`
+
+Returns the abuse contact email. For domains the registrar's data is checked first, then the registry's.
+
+```bash
+curl http://127.0.0.1:8888/abuse/1.1.1.1
+```
+
+```json
+{
+  "query": "1.1.1.1",
+  "type": "ip",
+  "abuse": "helpdesk@apnic.net",
+  "source_url": "https://rdap.apnic.net/ip/1.1.1.1"
+}
+```
+
+If the object exists but lists no abuse email, the response is still `200` with `"abuse": null`.
+
+#### `POST /batch`
+
+Runs several queries in one request (at most `--max-batch`, body up to 64 KiB). Duplicates are queried once, and queries run with bounded concurrency. The response is always `200`, with one result per query in input order; `data` has the same shape as `/query`.
+
+```bash
+curl -X POST http://127.0.0.1:8888/batch \
+  -H 'Content-Type: application/json' \
+  -d '{"queries": ["1.1.1.1", "example.com", "example.invalid"], "source": "registrar"}'
+```
+
+```json
+{
+  "results": [
+    { "query": "1.1.1.1", "ok": true, "status": 200, "data": { "query": "1.1.1.1", "type": "ip", "...": "..." } },
+    { "query": "example.com", "ok": true, "status": 200, "data": { "query": "example.com", "type": "domain", "...": "..." } },
+    { "query": "example.invalid", "ok": false, "status": 404,
+      "error": { "errorCode": 404, "title": "Not Found", "description": ["No RDAP record for example.invalid"] } }
+  ]
+}
+```
+
+#### `GET /healthz` and `GET /version`
+
+```bash
+curl http://127.0.0.1:8888/healthz
+# {"status":"ok"}
+
+curl http://127.0.0.1:8888/version
+# {"name":"rdap","version":"1.1.0"}
+```
+
+### Errors
+
+Errors use the RDAP error object (RFC 7480 section 5.3) with a matching HTTP status:
+
+```json
+{
+  "errorCode": 404,
+  "title": "Not Found",
+  "description": ["No RDAP record for example.invalid"]
+}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Invalid query, `type`, `source` or batch body |
+| `401` | Missing or wrong token (with `WWW-Authenticate: Bearer`) |
+| `404` | Object not found, no RDAP server known for it, or unknown path |
+| `405` | Wrong HTTP method |
+| `413` | Batch has too many queries, or the body is too large |
+| `429` | The upstream RDAP server rate-limited us |
+| `501` | Query type needs a fixed upstream (`-s`): entities, searches |
+| `502` | Upstream error, unparsable upstream response, or proxy failure |
+| `504` | Upstream timeout |
+
+### Authentication
+
+Authentication is off by default. With a token set, every endpoint except `/healthz` requires it:
+
+```bash
+RDAP_API_TOKEN=secret rdap --serve
+
+curl -H 'Authorization: Bearer secret' http://127.0.0.1:8888/query/example.com
+```
+
+Prefer `RDAP_API_TOKEN` over `--token`: command-line arguments are visible to other users in `ps`.
+
+### Caching
+
+Results are cached in memory for `--cache-ttl` seconds (default 300, `0` turns it off), keyed by endpoint, query type, normalized query and source. "Not found" answers are cached for at most 60 seconds, and upstream errors and timeouts are never cached. Concurrent identical requests share one upstream query.
+
+### Security Notes
+
+- The server listens on `127.0.0.1` by default, so only local clients can reach it.
+- Listening on any other address without a token prints a warning on startup, but the server still starts. **Do not expose it to a network without `RDAP_API_TOKEN`**: anyone who can reach it can send queries from your IP addresses and proxies, which can get them rate-limited or blocked by RDAP servers.
+- The server speaks plain HTTP. To reach it over an untrusted network, put it behind a TLS reverse proxy.
+- CORS headers are only sent with `--cors`.
+- Proxy credentials are never logged.
+
+## Network Options
+
+These options control how rdap connects to upstream RDAP servers (and to IANA for bootstrap files). They work for one-shot queries and for `--serve`.
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--interface <NAME>` | `RDAP_INTERFACE` | Send queries from this network interface (e.g. `eth1`) |
+| `--bind <IP>[,<IP>...]` | `RDAP_BIND` | Source IP(s); several addresses rotate |
+| `--proxy <URL>[,<URL>...]` | `RDAP_PROXY` | Proxy URL(s); several proxies rotate |
+| `--max-per-host <N>` | `RDAP_MAX_PER_HOST` | Concurrent requests per upstream server (default: unlimited, 8 with `--serve`) |
+
+```bash
+# Send queries from a specific interface or source address
+rdap --interface eth1 example.com
+rdap --bind 203.0.113.10 example.com
+rdap --bind 2001:db8::10 2001:db8::1
+
+# Rotate between source addresses
+rdap --serve --bind 203.0.113.10,203.0.113.11
+
+# Use a proxy, or rotate between several
+rdap --proxy socks5h://127.0.0.1:1080 example.com
+rdap --serve --proxy socks5h://user:pass@10.0.0.1:1080,socks5h://10.0.0.2:1080
+
+# Be gentle with upstream servers
+rdap --serve --max-per-host 4
+```
+
+- **Proxies**: `socks5://`, `socks5h://` (DNS resolved by the proxy), `http://` and `https://`, with optional `user:pass@` credentials.
+- **Rotation**: each request uses the next route, round-robin. With `--proxy`, routes are the proxies; otherwise they are the `--bind` addresses. `--interface` applies to every route.
+- **Failover**: if a connection fails before any HTTP response arrives (connect error, proxy error, timeout), the request is retried on the next route, up to 3 attempts. Requests that got an HTTP response are never retried.
+- `--bind` and `--proxy` accept repeated flags or comma-separated lists.
+- `--interface` uses `SO_BINDTODEVICE` on Linux and may need `CAP_NET_RAW`. If an option is not supported on your OS, or a proxy URL is invalid, rdap exits with an error at startup.
+
+## Docker / Compose
+
+The `Dockerfile` builds a small Debian-based image that runs the API server as an unprivileged user (UID 10001). Inside the container it listens on `0.0.0.0:8888`.
+
+```bash
+docker build -t rdap .
+
+# API server, published on localhost only
+docker run -d --name rdap -p 127.0.0.1:8888:8888 rdap
+curl http://127.0.0.1:8888/query/1.1.1.1
+
+# With a token and a proxy
+docker run -d --name rdap -p 8888:8888 \
+  -e RDAP_API_TOKEN=secret -e RDAP_PROXY=socks5h://10.0.0.1:1080 rdap
+
+# One-shot queries work too
+docker run --rm rdap 1.1.1.1
+docker run --rm rdap -f json-pretty example.com
+```
+
+`compose.yaml` is a reference setup: it builds the image, publishes `127.0.0.1:8888`, and runs with a read-only root filesystem, no capabilities and `no-new-privileges`. `$HOME` (`/home/rdap`) is a named volume, so configs fetched with `rdap --update` survive restarts. Uncomment the `environment:` entries to configure the server.
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+docker compose run --rm rdap --update   # refresh bootstrap/TLD configs in the volume
+docker compose down
+```
+
+## systemd Service
+
+The deb and rpm packages install a hardened `rdap.service` that runs `rdap --serve` with a dynamic, unprivileged user. It is **not** enabled or started on install.
+
+```bash
+# Configure (listen address, token, proxies, ...)
+sudo editor /etc/default/rdap
+
+# Start now and on boot
+sudo systemctl enable --now rdap
+
+# Apply config changes / check status / logs
+sudo systemctl restart rdap
+systemctl status rdap
+journalctl -u rdap -f
+
+# Stop and disable
+sudo systemctl disable --now rdap
+```
+
+`/etc/default/rdap` lists every `RDAP_*` variable, commented out with its default, and is kept on upgrades. It is readable by root only, since it may hold the API token or proxy credentials. Flags without an env var (such as `--timeout` or `-s`) go in `RDAP_ARGS`. For other changes, use `systemctl edit rdap` instead of editing the unit file.
+
+The service's `$HOME` is its state directory, `/var/lib/rdap`. It reads system-wide configs from `/etc/rdap/` as usual, so to give it fresher configs than the built-in ones, run `rdap --update` as any user and copy the results there:
+
+```bash
+rdap --update
+sudo mkdir -p /etc/rdap
+sudo cp ~/.config/rdap/config.json ~/.config/rdap/tlds.json ~/.config/rdap/tlds.txt /etc/rdap/
+sudo systemctl restart rdap
+```
+
+If `--interface` fails with "Operation not permitted", grant `CAP_NET_RAW` as described in the unit file.
 
 ## Library Usage
 
@@ -925,6 +1265,8 @@ src/
 │   ├── nameserver.rs
 │   └── ...
 ├── client.rs        # RDAP client
+├── net.rs           # Outbound HTTP: proxies, bind/interface, rotation, per-host limits
+├── server/          # API server (`rdap --serve`, feature `server`)
 ├── request.rs       # Request builder
 ├── bootstrap.rs     # Bootstrap service discovery
 ├── cache.rs         # Bootstrap cache
@@ -935,6 +1277,14 @@ config/
 ├── config.json      # Default bootstrap URLs
 ├── tlds.json        # Default TLD overrides for ccTLDs
 └── tlds.txt         # IANA TLD list for TLD query detection
+
+packaging/
+├── rdap.service     # systemd unit (deb/rpm)
+├── rdap.env         # /etc/default/rdap (deb/rpm)
+└── arch/            # Arch Linux PKGBUILDs
+
+Dockerfile           # Container image (API server by default)
+compose.yaml         # Reference Compose setup
 ```
 
 ## RFCs Implemented

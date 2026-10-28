@@ -28,6 +28,13 @@ cargo check
 
 # Run an example
 cargo run --example basic_query
+
+# Build without the API server
+cargo build --no-default-features
+
+# Container image / local API server
+docker build -t rdap .
+docker compose up -d --build
 ```
 
 ## Architecture
@@ -46,6 +53,17 @@ This is an RDAP (Registration Data Access Protocol) client written in Rust, impl
 - **`src/cache.rs`** - Bootstrap file caching in `~/.cache/rdap/`
 - **`src/ip.rs`** - IP address utilities: normalization (shorthand → standard), CIDR detection/parsing
 - **`src/models/`** - RDAP data models (Domain, Entity, Autnum, IpNetwork, Nameserver, etc.)
+- **`src/net.rs`** - `NetOptions` / `HttpPool` - all outbound HTTP (bootstrap, RDAP, referrals): proxies, `--bind` / `--interface`, round-robin route rotation with failover, per-host concurrency limit, body size limit
+- **`src/server/`** - `rdap --serve` HTTP API server (axum, behind the default `server` feature): RFC 7482 RDAP paths plus `/query`, `/abuse`, `/batch`, `/healthz`, `/version`; bearer token auth, moka result cache
+
+### Packaging
+
+- **`Dockerfile`** - multi-stage build (`rust:<ver>-slim-<codename>` → `debian:<codename>-slim`, same codename for matching glibc); runs `rdap --serve --listen 0.0.0.0` as UID 10001 with `HOME=/home/rdap`
+- **`compose.yaml`** - reference Compose setup (127.0.0.1:8888, read-only root fs, `$HOME` volume)
+- **`packaging/rdap.service`** - hardened systemd unit (`DynamicUser`, `HOME=/var/lib/rdap` via `StateDirectory`), installed by deb and rpm but never enabled/started on install
+- **`packaging/rdap.env`** - installed as `/etc/default/rdap` (conffile / `%config(noreplace)`, mode 600), commented `RDAP_*` defaults; keep in sync with the env vars in `src/main.rs`
+- **`packaging/arch/`** - Arch Linux PKGBUILDs
+- deb/rpm metadata lives in `Cargo.toml` (`[package.metadata.deb]`, `[package.metadata.generate-rpm]`); release builds them with `cargo zigbuild` (glibc 2.17) + `cargo deb --no-build` / `cargo generate-rpm`
 
 ### Configuration System
 
@@ -94,6 +112,9 @@ Config files in `config/` directory are embedded into the binary at compile time
 
 - `rdap <query>` - Main query command
 - `rdap --update` / `rdap -u` - Update config files from GitHub
+- `rdap --serve` - Run the API server (`--listen`, `--port`, `--token`, `--cache-ttl`, `--cors`, `--max-batch`)
+- `--interface`, `--bind`, `--proxy`, `--max-per-host` - Outbound network options (CLI and server)
+- Every server/network flag has an `RDAP_*` env var (e.g. `RDAP_API_TOKEN`, `RDAP_PROXY`)
 
 ### Dependencies
 
