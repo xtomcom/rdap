@@ -82,8 +82,9 @@ copyright = "2026, xTom"
 license-file = ["LICENSE", "0"]
 extended-description = "A modern RDAP client for querying domain, IP, and ASN registration data following RFC 7480-7484."
 section = "net"
-# Pinned: dpkg-shlibdeps over-reports (>= 2.34) and is skipped for cross builds
-depends = "libc6 (>= 2.17)"
+# Pinned: dpkg-shlibdeps over-reports (>= 2.34) and is skipped for cross builds.
+# ca-certificates: rustls needs the system root store for HTTPS.
+depends = "libc6 (>= 2.17), ca-certificates"
 priority = "optional"
 assets = [
     ["target/release/rdap", "usr/bin/", "755"],
@@ -96,3 +97,4 @@ assets = [
 ]
 
 [package.metadata.generate-rpm.requires]
+ca-certificates = "*"
