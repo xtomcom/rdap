@@ -15,7 +15,8 @@ env:
   APP_NAME: rdap
 
 jobs:
-  # Native builds for best performance on common platforms
+  # glibc builds on native runners, linked against glibc 2.17 via zigbuild so
+  # they run on most distros (CentOS 7+, Debian 8+, Ubuntu 14.04+)
   build-linux-native:
     name: Build Linux Native (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -24,24 +25,31 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            glibc: '2.17'
+            runner: ubuntu-latest
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
+            glibc: '2.17'
             runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cargo-zigbuild
+        run: |
+          pip3 install ziglang
+          cargo install cargo-zigbuild
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.target }}.${{ matrix.glibc }}
 
       - name: Prepare artifact
         run: |
@@ -50,7 +58,7 @@ jobs:
           chmod +x ${{ env.APP_NAME }}-${VERSION}-linux-${{ matrix.arch }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-*-linux-${{ matrix.arch }}
@@ -71,14 +79,16 @@ jobs:
           # ARM 32-bit
           - arch: armv7
             target: armv7-unknown-linux-gnueabihf
+            glibc: '2.17'
           - arch: armv7-musl
             target: armv7-unknown-linux-musleabihf
-          # RISC-V
+          # RISC-V (glibc gained riscv64 support in 2.27)
           - arch: riscv64
             target: riscv64gc-unknown-linux-gnu
+            glibc: '2.27'
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -94,7 +104,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.target }}${{ matrix.glibc && format('.{0}', matrix.glibc) || '' }}
 
       - name: Prepare artifact
         run: |
@@ -103,12 +113,12 @@ jobs:
           chmod +x ${{ env.APP_NAME }}-${VERSION}-linux-${{ matrix.arch }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-*-linux-${{ matrix.arch }}
 
-  # Debian packages (musl for glibc compatibility)
+  # Debian packages (glibc 2.17 for broad distro compatibility)
   build-deb:
     name: Build deb (${{ matrix.arch }})
     runs-on: ubuntu-latest
@@ -116,12 +126,12 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
           - arch: arm64
-            target: aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -137,7 +147,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.target }}.2.17
 
       - name: Build deb package
         run: cargo deb --no-build --target ${{ matrix.target }}
@@ -148,12 +158,12 @@ jobs:
           cp target/${{ matrix.target }}/debian/*.deb ${{ env.APP_NAME }}_${VERSION}_${{ matrix.arch }}.deb
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}_*.deb
 
-  # RPM packages (musl for glibc compatibility)
+  # RPM packages (glibc 2.17 for broad distro compatibility)
   build-rpm:
     name: Build rpm (${{ matrix.arch }})
     runs-on: ubuntu-latest
@@ -161,12 +171,12 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
           - arch: aarch64
-            target: aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -182,10 +192,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.target }}.2.17
 
       - name: Build rpm package
-        run: cargo generate-rpm --target ${{ matrix.target }}
+        # gzip payload: rpm < 4.14 (CentOS 7) can't read the default zstd
+        run: cargo generate-rpm --target ${{ matrix.target }} --payload-compress gzip
 
       - name: Prepare artifact
         run: |
@@ -193,7 +204,7 @@ jobs:
           cp target/${{ matrix.target }}/generate-rpm/*.rpm ${{ env.APP_NAME }}-${VERSION}-1.${{ matrix.arch }}.rpm
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-*.rpm
@@ -212,7 +223,7 @@ jobs:
             runner: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -232,7 +243,7 @@ jobs:
           chmod +x ${{ env.APP_NAME }}-${VERSION}-macos-${{ matrix.arch }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: macos-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-*-macos-${{ matrix.arch }}
@@ -251,7 +262,7 @@ jobs:
             runner: windows-11-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -271,7 +282,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/${{ env.APP_NAME }}.exe" "${{ env.APP_NAME }}-${VERSION}-windows-${{ matrix.arch }}.exe"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-*-windows-${{ matrix.arch }}.exe
@@ -284,10 +295,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -308,7 +319,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: RDAP ${{ github.ref_name }}
           draft: false

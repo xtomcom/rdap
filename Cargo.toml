@@ -82,6 +82,8 @@ copyright = "2026, xTom"
 license-file = ["LICENSE", "0"]
 extended-description = "A modern RDAP client for querying domain, IP, and ASN registration data following RFC 7480-7484."
 section = "net"
+# Pinned: dpkg-shlibdeps over-reports (>= 2.34) and is skipped for cross builds
+depends = "libc6 (>= 2.17)"
 priority = "optional"
 assets = [
     ["target/release/rdap", "usr/bin/", "755"],
