@@ -45,4 +45,16 @@ pub enum RdapError {
 
     #[error("{0}")]
     Other(String),
+
+    /// Connecting through a proxy failed (message has credentials redacted)
+    #[error("Proxy error: {0}")]
+    Proxy(String),
+
+    /// The response body exceeded the configured size limit
+    #[error("Response body exceeds {limit} bytes")]
+    BodyTooLarge { limit: usize },
+
+    /// Invalid network configuration (proxy URL, interface, ...), reported at startup
+    #[error("Network configuration error: {0}")]
+    Config(String),
 }
