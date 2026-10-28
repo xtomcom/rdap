@@ -105,6 +105,13 @@ enum JsonSource {
 
 #[tokio::main]
 async fn main() {
+    // Rust ignores SIGPIPE by default, so `rdap ... | head` panics on a closed
+    // stdout. Restore the default handler to exit quietly instead.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let cli = Cli::parse();

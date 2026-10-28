@@ -55,6 +55,7 @@ fn find_contact_by_role(entities: &[Entity], role: &str) -> Option<String> {
             .any(|r| r.to_lowercase() == role.to_lowercase())
             && let Some(vcard) = &entity.vcard
             && let Some(email) = vcard.email()
+            && !email.trim().is_empty()
         {
             return Some(email.to_string());
         }
