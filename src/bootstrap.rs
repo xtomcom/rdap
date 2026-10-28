@@ -3,12 +3,18 @@
 use crate::config::{self, Config, TldOverrides};
 use crate::error::{RdapError, Result};
 use crate::ip;
-use crate::request::{QueryType, RdapRequest};
+use crate::net::{HttpPool, NetOptions};
+use crate::request::{QueryType, RdapRequest, strip_as_prefix};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use url::Url;
+
+/// How long a fetched bootstrap registry is reused before refetching
+const REGISTRY_TTL: Duration = Duration::from_hours(24);
 
 /// Bootstrap registry file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,22 +27,32 @@ struct BootstrapRegistry {
 
 /// Bootstrap client for service discovery
 pub struct BootstrapClient {
-    http_client: reqwest::Client,
+    http: Arc<HttpPool>,
     config: Config,
     tld_overrides: TldOverrides,
+    /// In-memory registry cache: URL -> (fetched at, registry)
+    registries: Mutex<HashMap<String, (Instant, Arc<BootstrapRegistry>)>>,
 }
 
 impl BootstrapClient {
     /// Create a new bootstrap client
     pub fn new() -> Result<Self> {
+        Ok(Self::with_pool(Arc::new(HttpPool::new(
+            &NetOptions::default(),
+        )?)))
+    }
+
+    /// Create a bootstrap client that sends requests through `http`
+    pub fn with_pool(http: Arc<HttpPool>) -> Self {
         let config = Config::load().unwrap_or_default();
         let tld_overrides = config::load_tld_overrides().unwrap_or_default();
 
-        Ok(Self {
-            http_client: reqwest::Client::new(),
+        Self {
+            http,
             config,
             tld_overrides,
-        })
+            registries: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Lookup RDAP servers for a request
@@ -82,20 +98,32 @@ impl BootstrapClient {
         }
     }
 
-    /// Fetch bootstrap registry file from URL
-    async fn fetch_registry(&self, url: &str) -> Result<BootstrapRegistry> {
+    /// Fetch bootstrap registry file from URL, reusing a cached copy for `REGISTRY_TTL`
+    async fn fetch_registry(&self, url: &str) -> Result<Arc<BootstrapRegistry>> {
+        if let Some((fetched_at, registry)) = self.registries.lock().unwrap().get(url)
+            && fetched_at.elapsed() < REGISTRY_TTL
+        {
+            return Ok(Arc::clone(registry));
+        }
+
         log::debug!("Fetching bootstrap registry: {url}");
 
-        let response = self.http_client.get(url).send().await?;
+        let parsed = Url::parse(url)
+            .map_err(|e| RdapError::Bootstrap(format!("Invalid bootstrap URL {url}: {e}")))?;
+        let response = self.http.get(&parsed, "application/json", None).await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        if !(200..300).contains(&response.status) {
             return Err(RdapError::Bootstrap(format!(
-                "Failed to fetch registry: HTTP {status}"
+                "Failed to fetch registry: HTTP {}",
+                response.status
             )));
         }
 
-        let registry: BootstrapRegistry = response.json().await?;
+        let registry: Arc<BootstrapRegistry> = Arc::new(serde_json::from_slice(&response.body)?);
+        self.registries
+            .lock()
+            .unwrap()
+            .insert(url.to_owned(), (Instant::now(), Arc::clone(&registry)));
         Ok(registry)
     }
 
@@ -180,12 +208,7 @@ impl BootstrapClient {
 
     /// Match AS number
     fn match_asn(&self, registry: &BootstrapRegistry, asn_str: &str) -> Result<Vec<Url>> {
-        // Case-insensitive strip of "AS" prefix
-        let asn_str = if asn_str.to_uppercase().starts_with("AS") {
-            &asn_str[2..]
-        } else {
-            asn_str
-        };
+        let asn_str = strip_as_prefix(asn_str);
         let asn: u32 = asn_str
             .parse()
             .map_err(|_| RdapError::InvalidQuery(format!("Invalid AS number: {asn_str}")))?;

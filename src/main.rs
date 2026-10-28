@@ -2,7 +2,8 @@
 
 use clap::{Parser, ValueEnum};
 use colored::Colorize;
-use rdap::{QueryType, RdapClient, RdapRequest, display::RdapDisplay};
+use rdap::{NetOptions, QueryType, RdapClient, RdapRequest, display::RdapDisplay};
+use std::net::IpAddr;
 use std::process;
 
 #[derive(Parser)]
@@ -10,6 +11,7 @@ use std::process;
 #[command(author, version, about = "Modern RDAP client", long_about = None)]
 struct Cli {
     /// Query string (domain, IP, AS number, etc.)
+    #[arg(required_unless_present_any = ["update", "serve"])]
     query: Option<String>,
 
     /// RDAP server URL (optional, uses bootstrap if not specified)
@@ -47,6 +49,67 @@ struct Cli {
     /// Update configuration files from GitHub (config.json and tlds.json)
     #[arg(short = 'u', long)]
     update: bool,
+
+    /// Network interface to send queries from (e.g. eth1)
+    #[arg(long, env = "RDAP_INTERFACE", help_heading = "Network")]
+    interface: Option<String>,
+
+    /// Source IP to send queries from; repeat or comma-separate to rotate
+    #[arg(
+        long,
+        env = "RDAP_BIND",
+        value_delimiter = ',',
+        help_heading = "Network"
+    )]
+    bind: Vec<IpAddr>,
+
+    /// Proxy URL (socks5://, socks5h://, http://); repeat or comma-separate to rotate
+    #[arg(
+        long,
+        env = "RDAP_PROXY",
+        value_delimiter = ',',
+        help_heading = "Network"
+    )]
+    proxy: Vec<String>,
+
+    /// Maximum concurrent requests per upstream RDAP server [default: unlimited, 8 with --serve]
+    #[arg(long, env = "RDAP_MAX_PER_HOST", help_heading = "Network")]
+    max_per_host: Option<usize>,
+
+    #[command(flatten)]
+    serve: ServeArgs,
+}
+
+#[derive(clap::Args)]
+#[command(next_help_heading = "API server")]
+struct ServeArgs {
+    /// Run the local HTTP API server instead of a single query
+    #[arg(id = "serve", long = "serve", conflicts_with_all = ["query", "update"])]
+    enabled: bool,
+
+    /// Address to listen on
+    #[arg(long, env = "RDAP_LISTEN", default_value = "127.0.0.1")]
+    listen: IpAddr,
+
+    /// Port to listen on
+    #[arg(long, env = "RDAP_PORT", default_value = "8888")]
+    port: u16,
+
+    /// Require `Authorization: Bearer <TOKEN>` (prefer the env var: arguments show up in `ps`)
+    #[arg(long, env = "RDAP_API_TOKEN", hide_env_values = true)]
+    token: Option<String>,
+
+    /// Seconds to cache query results (0 disables the cache)
+    #[arg(long, env = "RDAP_CACHE_TTL", default_value = "300")]
+    cache_ttl: u64,
+
+    /// Send permissive CORS headers (for browser clients)
+    #[arg(long, env = "RDAP_CORS")]
+    cors: bool,
+
+    /// Maximum queries per /batch request
+    #[arg(long, env = "RDAP_MAX_BATCH", default_value = "100")]
+    max_batch: usize,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -122,6 +185,44 @@ async fn main() {
     }
 }
 
+fn net_options(cli: &Cli) -> NetOptions {
+    NetOptions {
+        timeout: std::time::Duration::from_secs(cli.timeout),
+        insecure: cli.insecure,
+        interface: cli.interface.clone(),
+        bind: cli.bind.clone(),
+        proxies: cli.proxy.clone(),
+        max_per_host: cli
+            .max_per_host
+            .unwrap_or(if cli.serve.enabled { 8 } else { 0 }),
+        ..NetOptions::default()
+    }
+}
+
+#[cfg(feature = "server")]
+async fn run_serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let client =
+        RdapClient::with_options(&net_options(&cli))?.with_follow_referral(!cli.no_referral);
+    let opts = rdap::server::ServeOptions {
+        listen: cli.serve.listen,
+        port: cli.serve.port,
+        token: cli.serve.token.filter(|t| !t.is_empty()),
+        cache_ttl: std::time::Duration::from_secs(cli.serve.cache_ttl),
+        cors: cli.serve.cors,
+        max_batch: cli.serve.max_batch,
+        ..rdap::server::ServeOptions::default()
+    };
+    rdap::server::serve(opts, std::sync::Arc::new(client))
+        .await
+        .map_err(|e| e.to_string().into())
+}
+
+#[cfg(not(feature = "server"))]
+#[allow(clippy::unused_async)]
+async fn run_serve(_cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    Err("this build of rdap was compiled without the `server` feature".into())
+}
+
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     use colored::Colorize;
 
@@ -130,26 +231,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         return run_update().await;
     }
 
-    let mut query = cli.query.ok_or("Query is required")?;
+    if cli.serve.enabled {
+        return run_serve(cli).await;
+    }
+
+    let raw_query = cli.query.as_deref().ok_or("Query is required")?;
 
     // Load TLD list for query type detection
     let tld_list = rdap::config::TldList::load().ok();
 
-    // Detect or use specified query type (BEFORE IP normalization)
-    let query_type = if let Some(qt) = cli.query_type {
-        qt.into()
-    } else {
-        RdapRequest::detect_type_with_tld_check(&query, |q| {
+    // Detect type (unless given), expand shorthand IPs (1.1 -> 1.0.0.1) and validate
+    let mut request =
+        RdapRequest::from_user_query(raw_query, cli.query_type.clone().map(Into::into), |q| {
             tld_list.as_ref().is_some_and(|list| list.is_tld(q))
-        })?
-    };
-
-    // Normalize IP addresses only if it's an IP query (handles shorthand like 1.1 -> 1.0.0.1)
-    if query_type == QueryType::Ip
-        && let Some(normalized) = rdap::ip::normalize_ip(&query)
-    {
-        query = normalized;
-    }
+        })?;
+    let query_type = request.query_type;
+    let query = request.query.clone();
 
     if cli.verbose {
         eprintln!("{} Query: {}", "→".bright_blue(), query.bright_white());
@@ -160,11 +257,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Build request
-    let mut request = RdapRequest::new(query_type, &query);
-
-    if let Some(server_url) = cli.server {
-        let url = url::Url::parse(&server_url)?;
+    if let Some(server_url) = &cli.server {
+        let url = url::Url::parse(server_url)?;
         request = request.with_server(url);
         if cli.verbose {
             eprintln!(
@@ -176,9 +270,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create client
-    let client = RdapClient::new()?
-        .with_timeout(std::time::Duration::from_secs(cli.timeout))
-        .with_follow_referral(!cli.no_referral);
+    let client =
+        RdapClient::with_options(&net_options(&cli))?.with_follow_referral(!cli.no_referral);
 
     // Execute query
     if cli.verbose {

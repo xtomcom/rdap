@@ -4,14 +4,16 @@ use crate::bootstrap::BootstrapClient;
 use crate::error::{RdapError, Result};
 use crate::ip;
 use crate::models::{Domain, RdapObject};
+use crate::net::{HttpPool, NetOptions};
 use crate::request::{QueryType, RdapRequest};
-use reqwest::Client;
+use serde::Serialize;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
 /// RDAP query result with optional registrar data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RdapQueryResult {
     /// Primary result from registry
     pub registry: RdapObject,
@@ -25,33 +27,36 @@ pub struct RdapQueryResult {
 
 /// RDAP client
 pub struct RdapClient {
-    http_client: Client,
+    http: Arc<HttpPool>,
     bootstrap: BootstrapClient,
-    timeout: Duration,
+    /// Per-request timeout override for RDAP queries (`None` = pool default)
+    timeout: Option<Duration>,
     follow_referral: bool,
 }
 
 impl RdapClient {
-    /// Create a new RDAP client
+    /// Create a new RDAP client with default network options
     pub fn new() -> Result<Self> {
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent(concat!("rdap-rust/", env!("CARGO_PKG_VERSION")))
-            .build()?;
+        Self::with_options(&NetOptions::default())
+    }
 
-        let bootstrap = BootstrapClient::new()?;
+    /// Create a new RDAP client with custom network options (timeout,
+    /// proxies, source address, ...)
+    pub fn with_options(opts: &NetOptions) -> Result<Self> {
+        let http = Arc::new(HttpPool::new(opts)?);
+        let bootstrap = BootstrapClient::with_pool(Arc::clone(&http));
 
         Ok(Self {
-            http_client,
+            http,
             bootstrap,
-            timeout: Duration::from_secs(30),
+            timeout: None,
             follow_referral: true, // Enable by default
         })
     }
 
-    /// Set timeout
+    /// Set timeout for RDAP queries
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
     }
 
@@ -255,39 +260,37 @@ impl RdapClient {
     /// Fetch RDAP response from URL
     pub async fn fetch_rdap(&self, url: &Url) -> Result<RdapObject> {
         let response = self
-            .http_client
-            .get(url.as_str())
-            .header("Accept", "application/rdap+json, application/json")
-            .send()
+            .http
+            .get(url, "application/rdap+json, application/json", self.timeout)
             .await?;
+        let status = response.status;
 
-        let status = response.status();
-
-        if status.is_success() {
-            let text = response.text().await?;
-            let obj = self.parse_response(&text)?;
-            Ok(obj)
-        } else if status.as_u16() == 404 {
+        if (200..300).contains(&status) {
+            self.parse_response(&response.body)
+        } else if status == 404 {
             Err(RdapError::NotFound)
+        } else if let Ok(err_obj) =
+            serde_json::from_slice::<crate::models::ErrorResponse>(&response.body)
+        {
+            // Server sent an RDAP error object
+            Err(RdapError::ServerError {
+                code: err_obj.error_code.unwrap_or(status),
+                title: err_obj.title.unwrap_or_else(|| "Unknown error".to_string()),
+                description: err_obj.description,
+            })
         } else {
-            // Try to parse as error response
-            let text = response.text().await?;
-            if let Ok(err_obj) = serde_json::from_str::<crate::models::ErrorResponse>(&text) {
-                Err(RdapError::ServerError {
-                    code: err_obj.error_code.unwrap_or(status.as_u16()),
-                    title: err_obj.title.unwrap_or_else(|| "Unknown error".to_string()),
-                    description: err_obj.description,
-                })
-            } else {
-                Err(RdapError::Other(format!("HTTP error: {status}")))
-            }
+            Err(RdapError::ServerError {
+                code: status,
+                title: format!("HTTP error {status}"),
+                description: Vec::new(),
+            })
         }
     }
 
     /// Parse RDAP JSON response
-    fn parse_response(&self, json: &str) -> Result<RdapObject> {
+    fn parse_response(&self, json: &[u8]) -> Result<RdapObject> {
         // First, parse as generic JSON to inspect structure
-        let value: serde_json::Value = serde_json::from_str(json)?;
+        let value: serde_json::Value = serde_json::from_slice(json)?;
 
         // Detect object type
         if let Some(obj) = value.as_object() {

@@ -1,6 +1,6 @@
 //! RDAP request types and builders
 
-use crate::error::Result;
+use crate::error::{RdapError, Result};
 use crate::ip;
 use std::fmt;
 use url::Url;
@@ -60,6 +60,14 @@ impl fmt::Display for QueryType {
     }
 }
 
+/// Strip a case-insensitive `AS` prefix from an AS number (`AS13335` -> `13335`)
+pub fn strip_as_prefix(query: &str) -> &str {
+    match query.get(..2) {
+        Some(prefix) if prefix.eq_ignore_ascii_case("AS") => &query[2..],
+        _ => query,
+    }
+}
+
 /// RDAP request
 #[derive(Debug, Clone)]
 pub struct RdapRequest {
@@ -84,6 +92,50 @@ impl RdapRequest {
         self
     }
 
+    /// Build a request from free-form user input (CLI argument or API path).
+    ///
+    /// Detects the query type unless `query_type` is given, expands shorthand
+    /// IPs (`1.1` -> `1.0.0.1`) and rejects input that can't be a valid query.
+    pub fn from_user_query<F>(query: &str, query_type: Option<QueryType>, is_tld: F) -> Result<Self>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(RdapError::InvalidQuery("Query is empty".to_owned()));
+        }
+        if query.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(RdapError::InvalidQuery(format!(
+                "Query contains whitespace or control characters: {query:?}"
+            )));
+        }
+
+        let query_type = match query_type {
+            Some(qt) => qt,
+            None => Self::detect_type_with_tld_check(query, is_tld)?,
+        };
+
+        let query = match query_type {
+            QueryType::Ip
+            | QueryType::DomainSearchByNameserverIp
+            | QueryType::NameserverSearchByIp => ip::normalize_ip(query).ok_or_else(|| {
+                RdapError::InvalidQuery(format!("Invalid IP address or CIDR: {query}"))
+            })?,
+            QueryType::Autnum => {
+                let asn = strip_as_prefix(query);
+                if asn.parse::<u32>().is_err() {
+                    return Err(RdapError::InvalidQuery(format!(
+                        "Invalid AS number: {query}"
+                    )));
+                }
+                format!("AS{asn}")
+            }
+            _ => query.to_owned(),
+        };
+
+        Ok(Self::new(query_type, query))
+    }
+
     /// Build the full RDAP URL
     pub fn build_url(&self, base_url: &Url) -> Result<Url> {
         let encoded_query = urlencoding::encode(&self.query);
@@ -91,16 +143,8 @@ impl RdapRequest {
             QueryType::Domain | QueryType::Tld => {
                 format!("domain/{encoded_query}")
             }
-            QueryType::Ip => format!("ip/{}", self.query),
-            QueryType::Autnum => {
-                // Case-insensitive strip of "AS" prefix
-                let asn = if self.query.to_uppercase().starts_with("AS") {
-                    &self.query[2..]
-                } else {
-                    &self.query
-                };
-                format!("autnum/{asn}")
-            }
+            QueryType::Ip => format!("ip/{}", Self::checked_ip(&self.query)?),
+            QueryType::Autnum => format!("autnum/{}", strip_as_prefix(&self.query)),
             QueryType::Entity => format!("entity/{encoded_query}"),
             QueryType::Nameserver => format!("nameserver/{encoded_query}"),
             QueryType::Help => "help".to_owned(),
@@ -111,13 +155,15 @@ impl RdapRequest {
                 return Ok(base_url.join(&format!("domains?nsLdhName={encoded_query}"))?);
             }
             QueryType::DomainSearchByNameserverIp => {
-                return Ok(base_url.join(&format!("domains?nsIp={}", self.query))?);
+                let ip = Self::checked_ip(&self.query)?;
+                return Ok(base_url.join(&format!("domains?nsIp={ip}"))?);
             }
             QueryType::NameserverSearch => {
                 return Ok(base_url.join(&format!("nameservers?name={encoded_query}"))?);
             }
             QueryType::NameserverSearchByIp => {
-                return Ok(base_url.join(&format!("nameservers?ip={}", self.query))?);
+                let ip = Self::checked_ip(&self.query)?;
+                return Ok(base_url.join(&format!("nameservers?ip={ip}"))?);
             }
             QueryType::EntitySearch => {
                 return Ok(base_url.join(&format!("entities?fn={encoded_query}"))?);
@@ -128,6 +174,22 @@ impl RdapRequest {
         };
 
         Ok(base_url.join(&path)?)
+    }
+
+    /// IPs and CIDRs go into the URL unencoded (the `/` must stay), so only
+    /// allow characters that can appear in one
+    fn checked_ip(query: &str) -> Result<&str> {
+        if !query.is_empty()
+            && query
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '/'))
+        {
+            Ok(query)
+        } else {
+            Err(RdapError::InvalidQuery(format!(
+                "Invalid IP address or CIDR: {query}"
+            )))
+        }
     }
 
     /// Detect query type from string
@@ -141,23 +203,13 @@ impl RdapRequest {
         F: Fn(&str) -> bool,
     {
         // Check for AS number
-        if query.to_uppercase().starts_with("AS") && query[2..].chars().all(|c| c.is_ascii_digit())
-        {
+        let asn = strip_as_prefix(query);
+        if asn.len() < query.len() && !asn.is_empty() && asn.chars().all(|c| c.is_ascii_digit()) {
             return Ok(QueryType::Autnum);
         }
 
-        // Check for pure number (AS number without AS prefix)
-        // But not if it looks like an IP (e.g., large numbers that could be IPs)
-        if query.chars().all(|c| c.is_ascii_digit()) {
-            // Numbers > 4_294_967_295 can't be AS numbers or IPs
-            if let Ok(n) = query.parse::<u64>()
-                && n <= 4_294_967_295
-                && n <= 4_294_967_294
-            {
-                // Could be AS number or IP in numeric form
-                // Treat as AS number if it's a reasonable AS number range
-                return Ok(QueryType::Autnum);
-            }
+        // Pure number -> AS number without the AS prefix
+        if !query.is_empty() && query.chars().all(|c| c.is_ascii_digit()) {
             return Ok(QueryType::Autnum);
         }
 
@@ -201,6 +253,52 @@ mod tests {
         assert_eq!(
             RdapRequest::detect_type("15169").unwrap(),
             QueryType::Autnum
+        );
+    }
+
+    #[test]
+    fn test_detect_type_non_ascii_does_not_panic() {
+        // "aß" uppercases to "ASS" but byte 2 is inside 'ß'
+        assert_eq!(RdapRequest::detect_type("aß").unwrap(), QueryType::Domain);
+        assert_eq!(RdapRequest::detect_type("AS").unwrap(), QueryType::Domain);
+    }
+
+    #[test]
+    fn test_from_user_query() {
+        let no_tld = |_: &str| false;
+        let req = RdapRequest::from_user_query(" 1.1 ", None, no_tld).unwrap();
+        assert_eq!(
+            (req.query_type, req.query.as_str()),
+            (QueryType::Ip, "1.0.0.1")
+        );
+
+        let req = RdapRequest::from_user_query("as13335", None, no_tld).unwrap();
+        assert_eq!(
+            (req.query_type, req.query.as_str()),
+            (QueryType::Autnum, "AS13335")
+        );
+
+        let req = RdapRequest::from_user_query("google", None, |q| q == "google").unwrap();
+        assert_eq!(req.query_type, QueryType::Tld);
+
+        for bad in ["", "   ", "99999999999", "a b.com", "1.1.1.1/abc"] {
+            assert!(
+                RdapRequest::from_user_query(bad, None, no_tld).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert!(RdapRequest::from_user_query("../x", Some(QueryType::Ip), no_tld).is_err());
+    }
+
+    #[test]
+    fn test_build_url_rejects_path_injection() {
+        let base = Url::parse("https://rdap.example/").unwrap();
+        let req = RdapRequest::new(QueryType::Ip, "../../admin?x=1");
+        assert!(req.build_url(&base).is_err());
+        let req = RdapRequest::new(QueryType::Domain, "../admin");
+        assert_eq!(
+            req.build_url(&base).unwrap().as_str(),
+            "https://rdap.example/domain/..%2Fadmin"
         );
     }
 
