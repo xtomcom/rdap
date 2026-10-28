@@ -1,0 +1,77 @@
+name: Security Update
+
+on:
+  schedule:
+    # Run daily at 01:00 UTC
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  security-update:
+    name: Update Vulnerable Dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Find vulnerable crates
+        id: audit
+        run: |
+          cargo audit --json > audit.json || true
+          PACKAGES=$(jq -r '[.vulnerabilities.list[].package | "\(.name)@\(.version)"] | unique | join(" ")' audit.json)
+          IDS=$(jq -r '[.vulnerabilities.list[].advisory.id] | unique | join(", ")' audit.json)
+          echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+          echo "ids=$IDS" >> $GITHUB_OUTPUT
+          if [ -n "$PACKAGES" ]; then
+            echo "Vulnerable: $PACKAGES ($IDS)"
+          else
+            echo "No vulnerabilities found"
+          fi
+
+      # Semver-compatible updates only. If a fix needs a breaking upgrade,
+      # the re-audit below fails and the run turns red for manual follow-up.
+      - name: Update vulnerable crates
+        if: steps.audit.outputs.packages != ''
+        run: |
+          for pkg in ${{ steps.audit.outputs.packages }}; do
+            cargo update -p "$pkg"
+          done
+          git diff --stat Cargo.lock
+
+      - name: Re-run security audit
+        if: steps.audit.outputs.packages != ''
+        run: cargo audit
+
+      - name: Run tests
+        if: steps.audit.outputs.packages != ''
+        run: cargo test
+
+      - name: Commit and push
+        if: steps.audit.outputs.packages != ''
+        run: |
+          git diff --quiet Cargo.lock && { echo "Cargo.lock unchanged"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "fix(deps): update vulnerable dependencies
+
+          Resolves ${{ steps.audit.outputs.ids }}.
+
+          Updated: ${{ steps.audit.outputs.packages }}"
+          git push

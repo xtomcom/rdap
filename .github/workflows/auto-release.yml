@@ -1,0 +1,74 @@
+name: Auto Release
+
+on:
+  schedule:
+    # Run weekly on Monday at 02:00 UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  auto-release:
+    name: Release Security Fixes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # Only release when a fix(deps) commit landed since the last tag
+      - name: Check for security fixes
+        id: check
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*')
+          echo "Last tag: $LAST_TAG"
+          if git log "$LAST_TAG"..HEAD --format=%s | grep -q '^fix(deps)'; then
+            echo "release=true" >> $GITHUB_OUTPUT
+            git log "$LAST_TAG"..HEAD --oneline
+          else
+            echo "release=false" >> $GITHUB_OUTPUT
+            echo "No security fixes since $LAST_TAG, skipping"
+          fi
+
+      - name: Setup Rust
+        if: steps.check.outputs.release == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Bump patch version
+        id: bump
+        if: steps.check.outputs.release == 'true'
+        run: |
+          CURRENT=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW="$MAJOR.$MINOR.$((PATCH + 1))"
+          sed -i "0,/^version = \"$CURRENT\"/s//version = \"$NEW\"/" Cargo.toml
+          cargo update -p rdap
+          echo "version=$NEW" >> $GITHUB_OUTPUT
+          echo "$CURRENT -> $NEW"
+
+      - name: Commit, tag and push
+        if: steps.check.outputs.release == 'true'
+        run: |
+          VERSION=${{ steps.bump.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump version to $VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD "v$VERSION"
+
+      # Tags pushed with GITHUB_TOKEN don't trigger release.yml, so dispatch it
+      # on the new tag explicitly.
+      - name: Trigger release build
+        if: steps.check.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=v${{ steps.bump.outputs.version }}
+          gh workflow run release.yml --ref "$VERSION" -f tag="$VERSION"
