@@ -63,7 +63,7 @@ struct Cli {
     )]
     bind: Vec<IpAddr>,
 
-    /// Proxy URL (socks5://, socks5h://, http://); repeat or comma-separate to rotate
+    /// Proxy URL (socks5://, socks5h://, http://, https://); repeat or comma-separate to rotate
     #[arg(
         long,
         env = "RDAP_PROXY",

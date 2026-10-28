@@ -60,6 +60,11 @@ impl RdapClient {
         self
     }
 
+    /// Redacted labels of the outbound routes (proxy / source address) in rotation
+    pub fn route_labels(&self) -> Vec<String> {
+        self.http.route_labels()
+    }
+
     /// Enable or disable following registrar referrals (default: enabled)
     pub const fn with_follow_referral(mut self, follow: bool) -> Self {
         self.follow_referral = follow;
@@ -76,28 +81,29 @@ impl RdapClient {
     /// Execute an RDAP request with registrar referral support
     pub async fn query_with_referral(&self, request: &RdapRequest) -> Result<RdapQueryResult> {
         // Try the original query first
-        match self.query_servers(request).await {
+        let err = match self.query_servers(request).await {
             Ok(result) => return Ok(result),
-            Err(ref e) if self.should_retry_with_cidr(request, e) => {
-                // For IPv6 host queries that get 400, retry with CIDR prefixes
-                // Some RDAP servers (e.g., TWNIC) don't support host-level IPv6 queries
-                for prefix_len in &[64u8, 48, 32] {
-                    if let Some(cidr_query) = self.make_cidr_query(request, *prefix_len) {
-                        log::info!(
-                            "Retrying with CIDR prefix /{prefix_len}: {}",
-                            cidr_query.query
-                        );
-                        if let Ok(result) = self.query_servers(&cidr_query).await {
-                            return Ok(result);
-                        }
+            Err(e) => e,
+        };
+
+        if self.should_retry_with_cidr(request, &err) {
+            // For IPv6 host queries that get 400, retry with CIDR prefixes
+            // Some RDAP servers (e.g., TWNIC) don't support host-level IPv6 queries
+            for prefix_len in &[64u8, 48, 32] {
+                if let Some(cidr_query) = self.make_cidr_query(request, *prefix_len) {
+                    log::info!(
+                        "Retrying with CIDR prefix /{prefix_len}: {}",
+                        cidr_query.query
+                    );
+                    if let Ok(result) = self.query_servers(&cidr_query).await {
+                        return Ok(result);
                     }
                 }
             }
-            Err(_) => {}
         }
 
         // All attempts failed, return the original error
-        self.query_servers(request).await
+        Err(err)
     }
 
     /// Check if we should retry an IPv6 query with CIDR notation
