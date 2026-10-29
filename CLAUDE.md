@@ -58,7 +58,7 @@ This is an RDAP (Registration Data Access Protocol) client written in Rust, impl
 
 ### Packaging
 
-- **`Dockerfile`** - multi-stage build (`rust:<ver>-slim-<codename>` → `debian:<codename>-slim`, same codename for matching glibc); runs `rdap --serve` with `RDAP_LISTEN=0.0.0.0` as UID 10001 with `HOME=/home/rdap`
+- **`Dockerfile`** - multi-stage build (`rust:<ver>-slim-trixie` → `gcr.io/distroless/cc-debian13:nonroot`, both Debian 13 so glibc matches; no shell in the runtime image); runs `rdap --serve` with `RDAP_LISTEN=0.0.0.0` as `nonroot` (UID 65532, `HOME=/home/nonroot`)
 - **`compose.yaml`** / **`.env.example`** - reference Compose setup using `ghcr.io/xtomcom/rdap` (127.0.0.1:8888, read-only root fs, `$HOME` volume); settings in `.env`
 - Release workflow publishes multi-arch (amd64 + arm64, native runners) images to `ghcr.io/xtomcom/rdap`
 - **`packaging/rdap.service`** - hardened systemd unit (`DynamicUser`, `HOME=/var/lib/rdap` via `StateDirectory`), installed by deb and rpm but never enabled/started on install

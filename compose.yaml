@@ -11,7 +11,7 @@ services:
         required: false
     read_only: true
     volumes:
-      - rdap-data:/home/rdap
+      - rdap-data:/home/nonroot
     tmpfs:
       - /tmp
     cap_drop: [ALL]
