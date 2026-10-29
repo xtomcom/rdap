@@ -56,6 +56,9 @@ const MAX_ATTEMPTS: usize = 3;
 /// Upper bound for the TCP connect timeout, so dead routes fail over quickly
 const MAX_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Per-host limiters kept before idle ones are pruned
+const MAX_TRACKED_HOSTS: usize = 1024;
+
 /// Supported proxy URL schemes
 const PROXY_SCHEMES: [&str; 4] = ["socks5", "socks5h", "http", "https"];
 
@@ -541,8 +544,11 @@ impl HttpPool {
         let limit = self.max_body_bytes;
         let too_large = || RdapError::BodyTooLarge { limit };
 
+        // Error bodies are only read for an error object: truncate instead of
+        // failing, so the real status isn't replaced by "body too large"
+        let is_success = (200..300).contains(&status);
         let expected = response.content_length();
-        if limit > 0 && expected.is_some_and(|len| len > limit as u64) {
+        if is_success && limit > 0 && expected.is_some_and(|len| len > limit as u64) {
             return Err(too_large());
         }
 
@@ -554,7 +560,7 @@ impl HttpPool {
                 Ok(None) => break,
                 // Error bodies are best-effort: some servers (e.g. Verisign's 404s)
                 // close TLS without close_notify, which must not hide the status
-                Err(e) if !(200..300).contains(&status) => {
+                Err(e) if !is_success => {
                     log::debug!("Ignoring body read error on HTTP {status}: {e}");
                     break;
                 }
@@ -562,7 +568,11 @@ impl HttpPool {
                 Err(e) => return Err(e.into()),
             };
             if limit > 0 && body.len() + chunk.len() > limit {
-                return Err(too_large());
+                if is_success {
+                    return Err(too_large());
+                }
+                body.clear();
+                break;
             }
             body.extend_from_slice(&chunk);
         }
@@ -580,13 +590,19 @@ impl HttpPool {
             url.host_str().unwrap_or_default(),
             url.port_or_known_default().unwrap_or_default()
         );
-        let semaphore = Arc::clone(
-            self.host_limits
-                .lock()
-                .unwrap()
-                .entry(key)
-                .or_insert_with(|| Arc::new(Semaphore::new(self.max_per_host))),
-        );
+        let semaphore = {
+            let mut limits = self.host_limits.lock().unwrap();
+            // Hosts come from upstream data (referrals); drop idle entries so
+            // the map can't grow without bound
+            if limits.len() >= MAX_TRACKED_HOSTS {
+                limits.retain(|_, semaphore| Arc::strong_count(semaphore) > 1);
+            }
+            Arc::clone(
+                limits
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(Semaphore::new(self.max_per_host))),
+            )
+        };
         // The semaphore is never closed
         semaphore.acquire_owned().await.ok()
     }
