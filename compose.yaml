@@ -1,8 +1,9 @@
 # rdap API server: cp .env.example .env && docker compose up -d
 services:
   rdap:
-    image: ghcr.io/xtomcom/rdap:latest
-    # build: .                      # build locally instead
+    image: xtomcom/rdap:latest      # Docker Hub
+    # image: ghcr.io/xtomcom/rdap:latest   # or GitHub Container Registry
+    # build: .                      # or build locally
     restart: unless-stopped
     ports:
       - "127.0.0.1:${HOST_PORT:-8888}:8888"

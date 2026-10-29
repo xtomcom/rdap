@@ -59,8 +59,8 @@ This is an RDAP (Registration Data Access Protocol) client written in Rust, impl
 ### Packaging
 
 - **`Dockerfile`** - multi-stage build (`rust:<ver>-slim-trixie` → `gcr.io/distroless/cc-debian13:nonroot`, both Debian 13 so glibc matches; no shell in the runtime image); runs `rdap --serve` with `RDAP_LISTEN=0.0.0.0` as `nonroot` (UID 65532, `HOME=/home/nonroot`)
-- **`compose.yaml`** / **`.env.example`** - reference Compose setup using `ghcr.io/xtomcom/rdap` (127.0.0.1:8888, read-only root fs, `$HOME` volume); settings in `.env`
-- Release workflow publishes multi-arch (amd64 + arm64, native runners) images to `ghcr.io/xtomcom/rdap`
+- **`compose.yaml`** / **`.env.example`** - reference Compose setup using `xtomcom/rdap` (Docker Hub; GHCR alternative commented) (127.0.0.1:8888, read-only root fs, `$HOME` volume); settings in `.env`
+- Release workflow publishes multi-arch (amd64 + arm64, native runners) images to Docker Hub `xtomcom/rdap` and `ghcr.io/xtomcom/rdap` (secret `DOCKERHUB_TOKEN`)
 - **`packaging/rdap.service`** - hardened systemd unit (`DynamicUser`, `HOME=/var/lib/rdap` via `StateDirectory`), installed by deb and rpm but never enabled/started on install
 - **`packaging/rdap.env`** - installed as `/etc/default/rdap` (conffile / `%config(noreplace)`, mode 600), commented `RDAP_*` defaults; keep in sync with the env vars in `src/main.rs`
 - **`packaging/arch/`** - Arch Linux PKGBUILDs
