@@ -8,8 +8,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// "Not found" answers are cached for at most this long
-const NOT_FOUND_TTL: Duration = Duration::from_secs(60);
+/// "Not found" answers, and results whose registrar referral failed, are
+/// cached for at most this long
+const SHORT_TTL: Duration = Duration::from_secs(60);
 
 /// (query type, normalized query). The endpoint and `source` only select a
 /// view of the result, so they don't need to be part of the key.
@@ -34,8 +35,8 @@ impl Expiry<CacheKey, Cached> for TtlPolicy {
         _created_at: Instant,
     ) -> Option<Duration> {
         Some(match value {
-            Cached::Found(_) => self.ttl,
-            Cached::NotFound(_) => self.ttl.min(NOT_FOUND_TTL),
+            Cached::Found(result) if !result.registrar_failed => self.ttl,
+            Cached::Found(_) | Cached::NotFound(_) => self.ttl.min(SHORT_TTL),
         })
     }
 }

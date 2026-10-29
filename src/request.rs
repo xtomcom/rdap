@@ -68,6 +68,16 @@ pub fn strip_as_prefix(query: &str) -> &str {
     }
 }
 
+/// Parse an AS number with or without the `AS` prefix (`AS13335`, `13335`).
+/// Only plain digits are accepted (no sign, no whitespace).
+pub fn parse_asn(query: &str) -> Option<u32> {
+    let digits = strip_as_prefix(query);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
 /// RDAP request
 #[derive(Debug, Clone)]
 pub struct RdapRequest {
@@ -121,15 +131,7 @@ impl RdapRequest {
             | QueryType::NameserverSearchByIp => ip::normalize_ip(query).ok_or_else(|| {
                 RdapError::InvalidQuery(format!("Invalid IP address or CIDR: {query}"))
             })?,
-            QueryType::Autnum => {
-                let asn = strip_as_prefix(query);
-                if asn.parse::<u32>().is_err() {
-                    return Err(RdapError::InvalidQuery(format!(
-                        "Invalid AS number: {query}"
-                    )));
-                }
-                format!("AS{asn}")
-            }
+            QueryType::Autnum => format!("AS{}", Self::checked_asn(query)?),
             _ => query.to_owned(),
         };
 
@@ -144,7 +146,7 @@ impl RdapRequest {
                 format!("domain/{encoded_query}")
             }
             QueryType::Ip => format!("ip/{}", Self::checked_ip(&self.query)?),
-            QueryType::Autnum => format!("autnum/{}", strip_as_prefix(&self.query)),
+            QueryType::Autnum => format!("autnum/{}", Self::checked_asn(&self.query)?),
             QueryType::Entity => format!("entity/{encoded_query}"),
             QueryType::Nameserver => format!("nameserver/{encoded_query}"),
             QueryType::Help => "help".to_owned(),
@@ -176,20 +178,19 @@ impl RdapRequest {
         Ok(base_url.join(&path)?)
     }
 
-    /// IPs and CIDRs go into the URL unencoded (the `/` must stay), so only
-    /// allow characters that can appear in one
-    fn checked_ip(query: &str) -> Result<&str> {
-        if !query.is_empty()
-            && query
-                .chars()
-                .all(|c| c.is_ascii_hexdigit() || matches!(c, '.' | ':' | '/'))
-        {
-            Ok(query)
-        } else {
-            Err(RdapError::InvalidQuery(format!(
-                "Invalid IP address or CIDR: {query}"
-            )))
-        }
+    /// IPs and CIDRs go into the URL unencoded (the `/` must stay), so they
+    /// must parse as a real address or network (no `..` path segments)
+    fn checked_ip(query: &str) -> Result<String> {
+        ip::normalize_ip(query)
+            .filter(|ip| {
+                ip.parse::<std::net::IpAddr>().is_ok() || ip.parse::<ipnet::IpNet>().is_ok()
+            })
+            .ok_or_else(|| RdapError::InvalidQuery(format!("Invalid IP address or CIDR: {query}")))
+    }
+
+    fn checked_asn(query: &str) -> Result<u32> {
+        parse_asn(query)
+            .ok_or_else(|| RdapError::InvalidQuery(format!("Invalid AS number: {query}")))
     }
 
     /// Detect query type from string
@@ -288,13 +289,33 @@ mod tests {
             );
         }
         assert!(RdapRequest::from_user_query("../x", Some(QueryType::Ip), no_tld).is_err());
+        for bad in ["1.1.1.1/33", "1.1.1.1/+8", "2001:db8::/129"] {
+            assert!(
+                RdapRequest::from_user_query(bad, None, no_tld).is_err(),
+                "{bad:?}"
+            );
+        }
+        for bad in ["+5", "AS+5", "AS-5", "AS"] {
+            let req = RdapRequest::from_user_query(bad, Some(QueryType::Autnum), no_tld);
+            assert!(req.is_err(), "{bad:?}");
+        }
+        let req = RdapRequest::from_user_query("AS0013335", None, no_tld).unwrap();
+        assert_eq!(req.query, "AS13335");
+        let req = RdapRequest::from_user_query("2001:db8::/32", None, no_tld).unwrap();
+        assert_eq!(req.query, "2001:db8::/32");
     }
 
     #[test]
     fn test_build_url_rejects_path_injection() {
         let base = Url::parse("https://rdap.example/").unwrap();
-        let req = RdapRequest::new(QueryType::Ip, "../../admin?x=1");
-        assert!(req.build_url(&base).is_err());
+        for (qt, q) in [
+            (QueryType::Ip, "../../admin?x=1"),
+            (QueryType::Ip, "../../dead/beef"),
+            (QueryType::Autnum, "../../admin?x=1"),
+            (QueryType::Autnum, "+5"),
+        ] {
+            assert!(RdapRequest::new(qt, q).build_url(&base).is_err(), "{q:?}");
+        }
         let req = RdapRequest::new(QueryType::Domain, "../admin");
         assert_eq!(
             req.build_url(&base).unwrap().as_str(),

@@ -29,6 +29,10 @@ pub struct RdapQueryResult {
     /// Registrar response exactly as received
     #[serde(skip)]
     pub registrar_json: Option<serde_json::Value>,
+    /// A registrar referral was found but fetching it failed, so this
+    /// registry-only result may be incomplete (and shouldn't be cached long)
+    #[serde(skip)]
+    pub registrar_failed: bool,
 }
 
 /// RDAP client
@@ -185,6 +189,7 @@ impl RdapClient {
                                 registrar_url: None,
                                 registry_json: json,
                                 registrar_json: None,
+                                registrar_failed: false,
                             });
                         }
 
@@ -198,11 +203,21 @@ impl RdapClient {
                                     registrar_url: Some(registrar_rdap_url),
                                     registry_json: json,
                                     registrar_json: Some(registrar_json),
+                                    registrar_failed: false,
                                 });
                             }
                             Err(e) => {
                                 log::warn!("Failed to fetch registrar data: {e}");
                                 // Continue with registry-only result
+                                return Ok(RdapQueryResult {
+                                    registry: obj,
+                                    registry_url: url,
+                                    registrar: None,
+                                    registrar_url: None,
+                                    registry_json: json,
+                                    registrar_json: None,
+                                    registrar_failed: true,
+                                });
                             }
                         }
                     }
@@ -213,6 +228,7 @@ impl RdapClient {
                         registrar_url: None,
                         registry_json: json,
                         registrar_json: None,
+                        registrar_failed: false,
                     });
                 }
                 Err(RdapError::NotFound) => return Err(RdapError::NotFound),

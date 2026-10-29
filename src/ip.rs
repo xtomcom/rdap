@@ -15,13 +15,16 @@ pub fn normalize_ip(input: &str) -> Option<String> {
     // Handle CIDR notation - return as-is if it's a valid CIDR
     if input.contains('/') {
         // Validate CIDR format
-        if let Some((ip_part, prefix_part)) = input.split_once('/') {
-            // Check if prefix is a valid number
-            if prefix_part.parse::<u8>().is_ok() {
-                // Try to normalize the IP part
-                if let Some(normalized_ip) = normalize_ip(ip_part) {
-                    return Some(format!("{normalized_ip}/{prefix_part}"));
-                }
+        if let Some((ip_part, prefix_part)) = input.split_once('/')
+            // Prefix must be plain digits (`parse` would also accept `+8`)
+            && !prefix_part.is_empty()
+            && prefix_part.bytes().all(|b| b.is_ascii_digit())
+            && let Ok(prefix) = prefix_part.parse::<u8>()
+            && let Some(normalized_ip) = normalize_ip(ip_part)
+        {
+            let max_prefix = if normalized_ip.contains(':') { 128 } else { 32 };
+            if prefix <= max_prefix {
+                return Some(format!("{normalized_ip}/{prefix}"));
             }
         }
         return None;

@@ -21,8 +21,8 @@ ExecStart=/usr/bin/rdap --serve $RDAP_ARGS
 Restart=on-failure
 RestartSec=5s
 
-# rdap keeps its bootstrap cache in $HOME/.cache/rdap and `--update` configs in
-# $HOME/.config/rdap; both live under the state directory /var/lib/rdap.
+# `rdap --update` writes configs to $HOME/.config/rdap, which lives under the
+# state directory /var/lib/rdap (bootstrap data is cached in memory).
 DynamicUser=yes
 StateDirectory=rdap
 StateDirectoryMode=0750

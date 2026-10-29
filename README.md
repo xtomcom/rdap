@@ -734,7 +734,7 @@ Prefer `RDAP_API_TOKEN` over `--token`: command-line arguments are visible to ot
 
 ### Caching
 
-Results are cached in memory for `--cache-ttl` seconds (default 300, `0` turns it off), keyed by endpoint, query type, normalized query and source. "Not found" answers are cached for at most 60 seconds, and upstream errors and timeouts are never cached. Concurrent identical requests share one upstream query.
+Results are cached in memory for `--cache-ttl` seconds (default 300, `0` turns it off), keyed by query type and normalized query, so `/ip/1.1.1.1`, `/query/1.1.1.1` and `/abuse/1.1.1.1` share one upstream lookup whatever `source` they ask for. "Not found" answers, and domain results whose registrar referral failed, are cached for at most 60 seconds; upstream errors and timeouts are never cached. Concurrent identical requests share one upstream query.
 
 ### Security Notes
 
@@ -774,7 +774,7 @@ rdap --serve --max-per-host 4
 
 - **Proxies**: `socks5://`, `socks5h://` (DNS resolved by the proxy), `http://` and `https://`, with optional `user:pass@` credentials.
 - **Rotation**: each request uses the next route, round-robin. With `--proxy`, routes are the proxies; otherwise they are the `--bind` addresses. `--interface` applies to every route.
-- **Failover**: if a connection fails before any HTTP response arrives (connect error, proxy error, timeout), the request is retried on the next route, up to 3 attempts. Requests that got an HTTP response are never retried.
+- **Failover**: if a route can't connect (connect error or connect timeout, proxy error), the request is retried on the next route, up to 3 attempts. Requests that got an HTTP response, or timed out waiting for one (a slow server), are never retried.
 - `--bind` and `--proxy` accept repeated flags or comma-separated lists.
 - `--interface` uses `SO_BINDTODEVICE` on Linux and may need `CAP_NET_RAW`. If an option is not supported on your OS, or a proxy URL is invalid, rdap exits with an error at startup.
 
@@ -1269,7 +1269,7 @@ src/
 ├── server/          # API server (`rdap --serve`, feature `server`)
 ├── request.rs       # Request builder
 ├── bootstrap.rs     # Bootstrap service discovery
-├── cache.rs         # Bootstrap cache
+├── cache.rs         # Disk cache helper (unused)
 ├── ip.rs            # IP address normalization and CIDR handling
 └── display.rs       # Pretty output formatting
 

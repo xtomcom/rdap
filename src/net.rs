@@ -18,10 +18,11 @@
 //!
 //! # Rotation and failover
 //!
-//! Each request starts on the next route in round-robin order. When it fails
-//! before any HTTP status was received (connect error, proxy handshake
-//! failure, timeout before the response head) it is retried on the next
-//! route, up to `min(routes, 3)` attempts. Once a status was received the
+//! Each request starts on the next route in round-robin order. When the route
+//! can't reach the destination (connect error or connect timeout, proxy
+//! handshake/auth failure) it is retried on the next route, up to
+//! `min(routes, 3)` attempts. A slow destination (timeout waiting for the
+//! response head) is not retried. Once a status was received the
 //! request is never retried. A route that just failed is put in a short
 //! cooldown during which rotation tries the other routes first.
 //!
@@ -257,10 +258,12 @@ fn error_chain(e: &dyn std::error::Error) -> String {
     message
 }
 
-/// Whether a `send()` error happened before any response was received and
-/// another route might succeed
+/// Whether a `send()` error means this route couldn't reach the destination
+/// (TCP connect, connect timeout, proxy handshake/auth), so another route might
+/// succeed. A response-head timeout means the destination is slow: retrying on
+/// other routes would multiply the wait and the load on that server.
 fn is_route_failure(e: &reqwest::Error) -> bool {
-    e.is_connect() || e.is_timeout()
+    e.is_connect()
 }
 
 /// Pool of HTTP clients, one per outbound route (proxy or source address)
@@ -575,7 +578,9 @@ fn proxy_source(bind: &[IpAddr], proxy: &Url, index: usize, label: &str) -> Resu
 fn base_builder(opts: &NetOptions, interface: Option<&str>) -> Result<reqwest::ClientBuilder> {
     let builder = reqwest::Client::builder()
         .timeout(opts.timeout)
-        .connect_timeout(opts.timeout.min(MAX_CONNECT_TIMEOUT))
+        // Strictly below the request timeout, so a route stuck connecting (or in
+        // a proxy handshake) fails as a connect error and fails over
+        .connect_timeout(opts.timeout.mul_f64(0.75).min(MAX_CONNECT_TIMEOUT))
         .user_agent(concat!("rdap-rust/", env!("CARGO_PKG_VERSION")))
         .danger_accept_invalid_certs(opts.insecure);
     match interface {

@@ -43,9 +43,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# rdap keeps its bootstrap cache in $HOME/.cache/rdap and `rdap --update`
-# writes $HOME/.config/rdap; pre-create both so a volume mounted at /home/rdap
-# starts out owned by the rdap user.
+# `rdap --update` writes $HOME/.config/rdap (bootstrap data is cached in
+# memory); pre-create the dirs so a volume mounted at /home/rdap starts out
+# owned by the rdap user.
 RUN groupadd --system --gid 10001 rdap \
     && useradd --system --uid 10001 --gid rdap --home-dir /home/rdap --shell /usr/sbin/nologin rdap \
     && install -d -o rdap -g rdap -m 0750 /home/rdap /home/rdap/.cache /home/rdap/.cache/rdap \

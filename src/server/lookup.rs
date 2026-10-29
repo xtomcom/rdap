@@ -156,6 +156,7 @@ fn check_result(
         result.registrar = None;
         result.registrar_url = None;
         result.registrar_json = None;
+        result.registrar_failed = true;
     }
     Ok(result)
 }

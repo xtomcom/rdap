@@ -4,7 +4,7 @@ use crate::config::{self, Config, TldOverrides};
 use crate::error::{RdapError, Result};
 use crate::ip;
 use crate::net::{HttpPool, NetOptions};
-use crate::request::{QueryType, RdapRequest, strip_as_prefix};
+use crate::request::{QueryType, RdapRequest, parse_asn};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -203,10 +203,8 @@ impl BootstrapClient {
 
     /// Match AS number
     fn match_asn(&self, registry: &BootstrapRegistry, asn_str: &str) -> Result<Vec<Url>> {
-        let asn_str = strip_as_prefix(asn_str);
-        let asn: u32 = asn_str
-            .parse()
-            .map_err(|_| RdapError::InvalidQuery(format!("Invalid AS number: {asn_str}")))?;
+        let asn = parse_asn(asn_str)
+            .ok_or_else(|| RdapError::InvalidQuery(format!("Invalid AS number: {asn_str}")))?;
 
         for service in &registry.services {
             if service.len() >= 2
