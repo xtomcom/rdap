@@ -7,6 +7,7 @@
 //! 4. Built-in defaults (embedded in binary)
 
 use crate::error::Result;
+use crate::net::{HttpPool, NetOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -242,87 +243,75 @@ pub fn lookup_tld_override(overrides: &TldOverrides, domain: &str) -> Option<Url
 
 /// Update configuration files from GitHub
 pub async fn update_configs() -> Result<UpdateResult> {
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("rdap-rust/", env!("CARGO_PKG_VERSION")))
-        .build()?;
+    update_configs_with(&HttpPool::new(&NetOptions::default())?).await
+}
 
+/// Update configuration files from GitHub, downloading through `http`
+/// (so `--proxy` / `--bind` / `--interface` apply)
+pub async fn update_configs_with(http: &HttpPool) -> Result<UpdateResult> {
     let config_dir = user_config_dir()?;
     fs::create_dir_all(&config_dir)?;
 
     let mut result = UpdateResult::default();
 
     // Update config.json
-    match client.get(CONFIG_UPDATE_URL).send().await {
-        Ok(response) if response.status().is_success() => {
-            match response.text().await {
-                Ok(content) => {
-                    // Validate JSON before saving
-                    if serde_json::from_str::<Config>(&content).is_ok() {
-                        let path = config_dir.join("config.json");
-                        fs::write(&path, &content)?;
-                        result.config_updated = true;
-                        log::info!("Updated config.json");
-                    } else {
-                        result.config_error = Some("Invalid config.json format".to_string());
-                    }
-                }
-                Err(e) => result.config_error = Some(format!("Failed to read response: {e}")),
-            }
+    match fetch_text(http, CONFIG_UPDATE_URL).await {
+        // Validate JSON before saving
+        Ok(content) if serde_json::from_str::<Config>(&content).is_ok() => {
+            fs::write(config_dir.join("config.json"), &content)?;
+            result.config_updated = true;
+            log::info!("Updated config.json");
         }
-        Ok(response) => result.config_error = Some(format!("HTTP {}", response.status())),
-        Err(e) => result.config_error = Some(format!("Request failed: {e}")),
+        Ok(_) => result.config_error = Some("Invalid config.json format".to_string()),
+        Err(e) => result.config_error = Some(e),
     }
 
     // Update tlds.json
-    match client.get(TLDS_UPDATE_URL).send().await {
-        Ok(response) if response.status().is_success() => {
-            match response.text().await {
-                Ok(content) => {
-                    // Validate JSON before saving
-                    if serde_json::from_str::<TldOverrides>(&content).is_ok() {
-                        let path = config_dir.join("tlds.json");
-                        fs::write(&path, &content)?;
-                        result.tlds_updated = true;
-                        log::info!("Updated tlds.json");
-                    } else {
-                        result.tlds_error = Some("Invalid tlds.json format".to_string());
-                    }
-                }
-                Err(e) => result.tlds_error = Some(format!("Failed to read response: {e}")),
-            }
+    match fetch_text(http, TLDS_UPDATE_URL).await {
+        // Validate JSON before saving
+        Ok(content) if serde_json::from_str::<TldOverrides>(&content).is_ok() => {
+            fs::write(config_dir.join("tlds.json"), &content)?;
+            result.tlds_updated = true;
+            log::info!("Updated tlds.json");
         }
-        Ok(response) => result.tlds_error = Some(format!("HTTP {}", response.status())),
-        Err(e) => result.tlds_error = Some(format!("Request failed: {e}")),
+        Ok(_) => result.tlds_error = Some("Invalid tlds.json format".to_string()),
+        Err(e) => result.tlds_error = Some(e),
     }
 
     // Update tlds.txt (IANA TLD list)
-    match client.get(TLD_LIST_UPDATE_URL).send().await {
-        Ok(response) if response.status().is_success() => {
-            match response.text().await {
-                Ok(content) => {
-                    // Validate content (should have lines starting with letters)
-                    let has_valid_tlds = content
-                        .lines()
-                        .filter(|l| !l.starts_with('#') && !l.is_empty())
-                        .take(5)
-                        .all(|l| l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
-                    if has_valid_tlds {
-                        let path = config_dir.join("tlds.txt");
-                        fs::write(&path, &content)?;
-                        result.tld_list_updated = true;
-                        log::info!("Updated tlds.txt");
-                    } else {
-                        result.tld_list_error = Some("Invalid tlds.txt format".to_string());
-                    }
-                }
-                Err(e) => result.tld_list_error = Some(format!("Failed to read response: {e}")),
+    match fetch_text(http, TLD_LIST_UPDATE_URL).await {
+        Ok(content) => {
+            // Validate content (should have lines starting with letters)
+            let has_valid_tlds = content
+                .lines()
+                .filter(|l| !l.starts_with('#') && !l.is_empty())
+                .take(5)
+                .all(|l| l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+            if has_valid_tlds {
+                fs::write(config_dir.join("tlds.txt"), &content)?;
+                result.tld_list_updated = true;
+                log::info!("Updated tlds.txt");
+            } else {
+                result.tld_list_error = Some("Invalid tlds.txt format".to_string());
             }
         }
-        Ok(response) => result.tld_list_error = Some(format!("HTTP {}", response.status())),
-        Err(e) => result.tld_list_error = Some(format!("Request failed: {e}")),
+        Err(e) => result.tld_list_error = Some(e),
     }
 
     Ok(result)
+}
+
+/// GET `url` as text; errors are user-facing messages
+async fn fetch_text(http: &HttpPool, url: &str) -> std::result::Result<String, String> {
+    let url = Url::parse(url).map_err(|e| format!("Invalid URL {url}: {e}"))?;
+    let response = http
+        .get(&url, "*/*", None)
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+    if !(200..300).contains(&response.status) {
+        return Err(format!("HTTP {}", response.status));
+    }
+    String::from_utf8(response.body).map_err(|e| format!("Failed to read response: {e}"))
 }
 
 /// Result of config update operation

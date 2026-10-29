@@ -1,6 +1,6 @@
 [package]
 name = "rdap"
-version = "1.0.10"
+version = "1.1.0"
 edition = "2024"
 authors = ["xTom", "Akaere Networks"]
 description = "A modern RDAP (Registration Data Access Protocol) client"
@@ -29,7 +29,7 @@ assigning_clones = "allow"
 
 [dependencies]
 # HTTP client
-reqwest = { version = "0.13", features = ["json", "rustls"] }
+reqwest = { version = "0.13", features = ["json", "rustls", "socks"] }
 tokio = { version = "1.53", features = ["full"] }
 
 # JSON serialization
@@ -37,7 +37,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # CLI
-clap = { version = "4.6", features = ["derive", "cargo"] }
+clap = { version = "4.6", features = ["derive", "cargo", "env"] }
 
 # Colors and formatting
 colored = "3.1"
@@ -51,7 +51,7 @@ thiserror = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
 
 # URL handling
-url = "2.5"
+url = { version = "2.5", features = ["serde"] }
 
 # IP/CIDR handling
 ipnet = "2.12"
@@ -61,6 +61,18 @@ urlencoding = "2.1"
 env_logger = "0.11"
 log = "0.4"
 
+# HTTP API server (`rdap --serve`)
+axum = { version = "0.8", optional = true }
+tower-http = { version = "0.7", features = ["compression-gzip", "compression-br", "cors", "trace", "timeout", "limit", "set-header"], optional = true }
+moka = { version = "0.12", features = ["future"], optional = true }
+subtle = { version = "2.6", optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio", "http1", "http2"], optional = true }
+
+[features]
+default = ["server"]
+# Local HTTP API server; disable with `default-features = false` when using rdap as a library
+server = ["dep:axum", "dep:tower-http", "dep:moka", "dep:subtle", "dep:hyper-util"]
+
 [target.'cfg(unix)'.dependencies]
 # Restore default SIGPIPE handling
 libc = "0.2"
@@ -68,6 +80,9 @@ libc = "0.2"
 [dev-dependencies]
 mockito = "1.7"
 tempfile = "3.27"
+# Driving the API router in tests
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [profile.release]
 opt-level = 3
@@ -80,21 +95,49 @@ strip = true
 maintainer = "xTom <packages@xtom.com>"
 copyright = "2026, xTom"
 license-file = ["LICENSE", "0"]
-extended-description = "A modern RDAP client for querying domain, IP, and ASN registration data following RFC 7480-7484."
+extended-description = """\
+A modern RDAP client for querying domain, IP, and ASN registration data following RFC 7480-7484.
+Includes an optional local HTTP API server (rdap.service, disabled by default)."""
 section = "net"
 # Pinned: dpkg-shlibdeps over-reports (>= 2.34) and is skipped for cross builds.
 # ca-certificates: rustls needs the system root store for HTTPS.
 depends = "libc6 (>= 2.17), ca-certificates"
 priority = "optional"
+# Files under /etc are conffiles automatically (kept on upgrade if edited).
+# The env file may hold the API token or proxy credentials, hence 600.
 assets = [
     ["target/release/rdap", "usr/bin/", "755"],
+    ["packaging/rdap.env", "etc/default/rdap", "600"],
 ]
+# Installs packaging/rdap.service with the dh_installsystemd maintainer scripts
+# (daemon-reload, try-restart on upgrade, stop on removal). Never enabled or
+# started on install.
+# cargo-deb only generates those scripts when maintainer-scripts is set.
+maintainer-scripts = "packaging"
+systemd-units = { unit-scripts = "packaging", enable = false, start = false }
 
 # RPM package metadata
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/rdap", dest = "/usr/bin/rdap", mode = "0755" },
+    { source = "packaging/rdap.service", dest = "/usr/lib/systemd/system/rdap.service", mode = "0644" },
+    { source = "packaging/rdap.env", dest = "/etc/default/rdap", mode = "0600", config = "noreplace" },
 ]
+# Like the deb: the service is installed but never enabled or started on install.
+post_install_script = """
+if [ -d /run/systemd/system ]; then systemctl daemon-reload >/dev/null 2>&1 || :; fi
+"""
+pre_uninstall_script = """
+if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
+    systemctl --no-reload disable --now rdap.service >/dev/null 2>&1 || :
+fi
+"""
+post_uninstall_script = """
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+    if [ "$1" -ge 1 ]; then systemctl try-restart rdap.service >/dev/null 2>&1 || :; fi
+fi
+"""
 
 [package.metadata.generate-rpm.requires]
 ca-certificates = "*"

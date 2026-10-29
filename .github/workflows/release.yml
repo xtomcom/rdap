@@ -10,9 +10,16 @@ on:
         description: 'Version tag (e.g., v0.2.0)'
         required: true
 
+# Jobs only get write access where they need it (see the release job)
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   APP_NAME: rdap
+  IMAGE: ghcr.io/${{ github.repository }}
+  DOCKERHUB_USER: xtomcom
+  DOCKERHUB_IMAGE: docker.io/xtomcom/rdap
 
 jobs:
   # glibc builds on native runners, linked against glibc 2.17 via zigbuild so
@@ -286,6 +293,136 @@ jobs:
         with:
           name: windows-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-*-windows-${{ matrix.arch }}.exe
+
+  # Container image: each architecture is built natively (QEMU-emulated Rust
+  # builds are very slow) and pushed by digest, then merged into one
+  # multi-arch manifest in docker-manifest
+  docker-build:
+    name: Build Docker (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: VERSION=${{ inputs.tag || github.ref_name }}
+          outputs: type=image,"name=${{ env.IMAGE }},${{ env.DOCKERHUB_IMAGE }}",push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-manifest:
+    name: Publish Docker image
+    needs: docker-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: docker-digest-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # v1.2.3 -> 1.2.3, 1.2, 1 and latest; pre-releases (v1.2.3-rc.1) only get
+      # their own tag
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ env.IMAGE }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.tag || github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag || github.ref_name }}
+            type=semver,pattern={{major}},value=${{ inputs.tag || github.ref_name }}
+            type=raw,value=latest,enable=${{ !contains(inputs.tag || github.ref_name, '-') }}
+
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        # The same digests were pushed to both registries; one manifest list
+        # per registry, each referencing its own copy
+        run: |
+          for image in "$IMAGE" "$DOCKERHUB_IMAGE"; do
+            tags=$(jq -cr --arg img "$image" '.tags | map(select(startswith($img + ":")) | "-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+            # shellcheck disable=SC2046,SC2086
+            docker buildx imagetools create $tags $(printf "$image@sha256:%s " *)
+          done
+
+      - name: Inspect image
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+          docker buildx imagetools inspect "$DOCKERHUB_IMAGE:$VERSION"
 
   release:
     name: Create Release

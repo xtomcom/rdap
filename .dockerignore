@@ -1,0 +1,17 @@
+# Only Cargo.toml, Cargo.lock, config/ and src/ are needed to build
+target/
+.git/
+.github/
+.claude/
+packaging/
+examples/
+debug/
+*.md
+Dockerfile
+.dockerignore
+compose.yaml
+/rdap
+**/*.rs.bk
+**/mutants.out*/
+.env
+.env.*

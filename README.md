@@ -1,60 +1,43 @@
-# RDAP Rust Client
+# rdap
 
-A modern, elegant RDAP (Registration Data Access Protocol) client written in Rust with beautiful colored output.
+`rdap` is an RDAP (Registration Data Access Protocol) client, library and API server written in Rust. It implements RFC 7480–7484 and queries registration data for domains, TLDs, IPv4/IPv6 addresses and prefixes, autonomous system numbers, nameservers and entities.
 
-Forked from [Akaere-NetWorks/rdap](https://github.com/Akaere-NetWorks/rdap), add more features and fix bugs.
+The project is a fork of [Akaere-NetWorks/rdap](https://github.com/Akaere-NetWorks/rdap), maintained by xTom.
 
 ## Features
 
-✨ **Modern & Fast**
-- Asynchronous I/O with Tokio
-- Efficient HTTP client with connection pooling
-- Fast JSON parsing with Serde
+**Client**
 
-🎨 **Beautiful Output**
-- Colorized terminal output
-- Pretty-printed tables
-- Clear hierarchical display
+- Query type detection: domains, TLDs (`rdap google`), IPv4/IPv6 addresses, abbreviated IPv4 notation (`1.1` resolves to `1.0.0.1`), CIDR prefixes, and AS numbers with or without the `AS` prefix.
+- Authoritative server discovery through the IANA bootstrap registries (RFC 7484), with an in-memory cache and a built-in override table for ccTLDs that are not listed in the bootstrap.
+- Two-tier domain lookups: the registry response followed by the registrar referral, so thick registrar data is shown next to the thin registry record.
+- Abuse contact extraction for domains, IP networks and AS numbers.
+- Output as formatted text, compact JSON or indented JSON.
 
-🔍 **Full RDAP Support**
-- Domain queries
-- TLDs queries
-- IP address queries (IPv4/IPv6)
-- IP CIDR queries (IPv4/IPv6)
-- AS number queries
-- Entity queries
-- Nameserver queries
-- Search queries
+**API server (`rdap --serve`)**
 
-🚀 **Smart Features**
-- Automatic bootstrap service discovery
-- Query type auto-detection
-- Multi-layer RDAP queries (registry + registrar for domains)
-- Custom TLD overrides for ccTLDs not in IANA bootstrap
-- Abuse contact display for IP/ASN queries
-- Disk caching of bootstrap files
-- Configurable timeouts
+- RFC 7482 query paths (`/domain`, `/ip`, `/autnum`, `/nameserver`, `/entity` and searches), usable as an RDAP endpoint by any standards-compliant client. Upstream objects are returned unmodified.
+- JSON endpoints for auto-detected queries, abuse contacts and batch lookups.
+- Result cache with a memory budget, short-lived negative caching and request coalescing for concurrent identical queries.
+- Optional bearer token authentication, DNS rebinding protection on loopback, connection and request limits.
 
-⚙️ **Configuration**
-- Built-in defaults for zero-config usage
-- Configurable bootstrap URLs and TLD overrides
-- Support for local override files (*.local.json)
-- `rdap --update` command to fetch latest configs from GitHub
+**Outbound networking**
+
+- SOCKS5 and HTTP(S) proxies, source address binding and interface binding (`SO_BINDTODEVICE`).
+- Round-robin rotation across proxies or source addresses, with failover on connection errors, to spread queries over several egress addresses and reduce exposure to upstream rate limits.
+- Per-host concurrency limits, response size limits and SSRF checks on referrals and redirects.
+
+**Distribution**
+
+- Packages for Debian/Ubuntu, RHEL-compatible systems and macOS (Homebrew), with a hardened systemd unit.
+- Multi-arch container image (`linux/amd64`, `linux/arm64`) on a distroless base.
+- Rust library crate; the API server can be excluded with `default-features = false`.
 
 ## Installation
 
-### From Source
-
-```bash
-git clone https://github.com/xtomcom/rdap.git
-cd rdap
-cargo build --release
-sudo cp target/release/rdap /usr/local/bin/
-```
-
 ### Debian / Ubuntu
 
-Debian (via extrepo):
+With extrepo (Debian):
 
 ```bash
 sudo apt update && sudo apt install extrepo -y
@@ -62,250 +45,184 @@ sudo extrepo enable xtom
 sudo apt update && sudo apt install rdap -y
 ```
 
-One-Line Style:
+Or add the repository manually, as a one-line `.list` file:
 
 ```bash
-sudo apt install -y lsb-release ca-certificates apt-transport-https curl gnupg dpkg
-# Add xTom repository
-curl -fsSL https://repo.xtom.com/xtom.key | bash -c 'gpg --dearmor > /usr/share/keyrings/xtom.gpg'
+sudo apt install -y ca-certificates curl gnupg
+curl -fsSL https://repo.xtom.com/xtom.key | sudo gpg --dearmor -o /usr/share/keyrings/xtom.gpg
 echo "deb [signed-by=/usr/share/keyrings/xtom.gpg] https://repo.xtom.com/deb stable main" | sudo tee /etc/apt/sources.list.d/xtom.list
-sudo apt update
-sudo apt install rdap
+sudo apt update && sudo apt install rdap -y
 ```
 
-DEB822:
+or in DEB822 format:
 
 ```bash
-sudo apt install -y lsb-release ca-certificates apt-transport-https curl gnupg dpkg
-curl -fsSL https://repo.xtom.com/xtom.key | bash -c 'gpg --dearmor > /usr/share/keyrings/xtom.gpg'
-sudo bash -c 'cat > /etc/apt/sources.list.d/xtom.sources << EOF
+sudo apt install -y ca-certificates curl gnupg dpkg
+curl -fsSL https://repo.xtom.com/xtom.key | sudo gpg --dearmor -o /usr/share/keyrings/xtom.gpg
+sudo tee /etc/apt/sources.list.d/xtom.sources > /dev/null << EOF
+Types: deb
+URIs: https://repo.xtom.com/deb
+Suites: stable
 Components: main
 Architectures: $(dpkg --print-architecture)
-Suites: stable
-Types: deb
-Uris: https://repo.xtom.com/deb
 Signed-By: /usr/share/keyrings/xtom.gpg
-EOF'
-sudo apt update
-sudo apt install rdap -y
+EOF
+sudo apt update && sudo apt install rdap -y
 ```
 
 ### RHEL / CentOS / Rocky / Alma / Fedora
 
 ```bash
-# Add xTom repository
 sudo curl -o /etc/yum.repos.d/xtom.repo https://repo.xtom.com/rpm/xtom.repo
 sudo dnf install rdap
 ```
 
+The deb and rpm packages (amd64 and arm64) require glibc 2.17 or later, which covers RHEL/CentOS 7, Debian 8, Ubuntu 14.04 and newer releases.
+
 ### macOS
 
 ```bash
-# Install Homebrew https://brew.sh/
 brew tap xtomcom/brew
 brew install xtomcom/brew/rdap
 ```
 
+### Container image
+
+```bash
+docker run --rm xtomcom/rdap xtom.com
+```
+
+See [Docker deployment](#docker-deployment) for running the API server.
+
+### From source
+
+```bash
+git clone https://github.com/xtomcom/rdap.git
+cd rdap
+cargo build --release
+sudo install -m 0755 target/release/rdap /usr/local/bin/
+```
+
+Prebuilt binaries for Linux (x86_64, aarch64, armv7, riscv64; glibc and musl), macOS and Windows are attached to each [GitHub release](https://github.com/xtomcom/rdap/releases).
+
 ## Usage
 
-### Basic Queries
-
 ```bash
-# Query a domain
-rdap example.com
-
-# Query a TLD (top-level domain)
-rdap google
-rdap com
-rdap io
-
-# Query an IP address
-rdap 192.0.2.1
-rdap 2001:db8::1
-
-# Query with shorthand IP (auto-normalized)
-rdap 1.1          # → queries 1.0.0.1
-rdap 8.8          # → queries 8.0.0.8
-
-# Query a CIDR range
-rdap 8.8.8.0/24
-
-# Query an AS number
-rdap AS15169
-rdap 15169
-
-# Query with verbose output
-rdap -v example.com
+rdap xtom.com               # domain
+rdap google                 # TLD (any label in the IANA TLD list)
+rdap 8.8.8.8                # IPv4 address
+rdap 2001:4860:4860::8888   # IPv6 address
+rdap 1.1                    # abbreviated IPv4, queries 1.0.0.1
+rdap 8.8.8.0/24             # CIDR prefix
+rdap AS8888                 # AS number
+rdap 8888                   # AS number without prefix
+rdap -v xtom.com            # verbose output
 ```
 
-### Advanced Options
+Options:
 
 ```bash
-# Specify query type explicitly
-rdap -t domain example.com
-
-# Use a specific RDAP server
-rdap -s https://rdap.verisign.com/com/v1 example.com
-
-# JSON output
-rdap -f json example.com
-rdap -f json-pretty example.com
-
-# JSON output from registry (default uses registrar data for domain queries)
-rdap -f json --json-source registry example.com
-
-# Set custom timeout (in seconds)
-rdap --timeout 60 example.com
-
-# Disable registrar referral following for domain queries
-rdap --no-referral example.com
-
-# Update configuration files from GitHub
-rdap --update
-rdap -u
+rdap -t domain xtom.com                             # set the query type explicitly
+rdap -s https://rdap.verisign.com/com/v1 xtom.com   # query this server, skip bootstrap
+rdap -f json xtom.com                               # compact JSON
+rdap -f json-pretty xtom.com                        # indented JSON
+rdap -f json --json-source registry xtom.com        # registry object instead of registrar
+rdap --no-referral xtom.com                         # do not follow the registrar referral
+rdap --timeout 60 xtom.com                          # request timeout in seconds (default 30)
+rdap -k xtom.com                                    # skip TLS certificate verification
+rdap -u                                             # update config files (same as --update)
 ```
 
-### Output Formats
+`-t` accepts `domain`, `tld`, `ip`, `autnum`, `entity`, `nameserver`, `help`, `domain-search`, `domain-search-by-nameserver`, `domain-search-by-nameserver-ip`, `nameserver-search`, `nameserver-search-by-ip`, `entity-search` and `entity-search-by-handle`. Entity lookups and searches have no bootstrap registry and require `-s`.
 
-- `text` - Beautiful colored terminal output (default)
-- `json` - Compact JSON
-- `json-pretty` - Pretty-printed JSON
+For domains, JSON output contains the registrar object when the referral succeeds and the registry object otherwise. `--json-source registry` always selects the registry object.
 
 ## Examples
 
-### Domain Query
+Output is abbreviated (`…`).
 
-```bash
-$ rdap google.com
+### Domain
 
-Abuse contact for `google.com` is `abusecomplaints@markmonitor.com`
+The registry (Verisign) answers first, then the registrar referral is followed:
 
-Query from https://rdap.verisign.com/com/v1/domain/google.com
-
-Domain Name: GOOGLE.COM
-Handle: 2138514_DOMAIN_COM-VRSN
-Object Class: domain
-Status: client delete prohibited
-Status: client transfer prohibited
-Status: client update prohibited
-Status: server delete prohibited
-Status: server transfer prohibited
-Status: server update prohibited
-Nameserver: NS1.GOOGLE.COM
-Nameserver: NS2.GOOGLE.COM
-Nameserver: NS3.GOOGLE.COM
-Nameserver: NS4.GOOGLE.COM
-Delegation Signed: no
-Registration: 1997-09-15T04:00:00Z
-Expiration: 2028-09-14T04:00:00Z
-Last Changed: 2019-09-09T15:39:04Z
-Last Update: 2026-02-03T10:25:50Z
-
-Entity Handle: 292
-Role: registrar
-Name: MarkMonitor Inc.
-IANA Registrar ID: 292
-
-Query from https://rdap.markmonitor.com/rdap/domain/GOOGLE.COM
-
-Domain Name: google.com
-Handle: 2138514_DOMAIN_COM-VRSN
-Object Class: domain
-Port43: whois.markmonitor.com
-Status: client update prohibited
-Status: client transfer prohibited
-Status: client delete prohibited
-Status: server update prohibited
-Status: server transfer prohibited
-Status: server delete prohibited
-Nameserver: ns1.google.com
-Nameserver: ns2.google.com
-Nameserver: ns3.google.com
-Nameserver: ns4.google.com
-Delegation Signed: no
-registrar expiration: 2028-09-14T07:00:00.000+00:00
-Expiration: 2028-09-13T07:00:00.000+00:00
-Registration: 1997-09-15T07:00:00.000+00:00
-Last Changed: 2024-08-02T02:17:33.000+00:00
-Last Update: 2026-02-03T10:21:36.000+00:00
-
-Role: registrant
-Name: REDACTED REGISTRANT
-Organization: Google LLC
-Email: REDACTED FOR PRIVACY
-Phone: REDACTED FOR PRIVACY
-Street: REDACTED FOR PRIVACY
-Locality: REDACTED FOR PRIVACY
-Postal Code: REDACTED FOR PRIVACY
-last changed: 2017-12-11T15:40:13.000+00:00
-Role: technical
-last changed: 2017-12-11T15:40:13.000+00:00
-Entity Handle: 292
-Role: registrar
-Name: Markmonitor Inc.
-Organization: Markmonitor Inc.
-Street: 3540 E Longwing Ln
-Locality: Meridian
-Region: ID
-Postal Code: 83646
-IANA Registrar ID: 292
-Link: https://rdap.markmonitor.com/rdap/domain/google.com
 ```
+$ rdap xtom.com
+Abuse contact for `xtom.com` is `abuse@xtom.com`
 
-### TLD Query
+Query from https://rdap.verisign.com/com/v1/domain/xtom.com
 
-```bash
-$ rdap google
-
-Administrative contact for `google` is `iana-contact@google.com`
-
-Technical contact for `google` is `crr-tech@google.com`
-
-Query from https://rdap.iana.org/domain/google
-
-Domain Name: google
+Domain Name: XTOM.COM
+Handle: 15339482_DOMAIN_COM-VRSN
 Object Class: domain
-Status: active
-Nameserver: ns-tld1.charlestonroadregistry.com (216.239.32.105, 2001:4860:4802:32::69)
-Nameserver: ns-tld2.charlestonroadregistry.com (216.239.34.105, 2001:4860:4802:34::69)
-Nameserver: ns-tld3.charlestonroadregistry.com (216.239.36.105, 2001:4860:4802:36::69)
-Nameserver: ns-tld4.charlestonroadregistry.com (216.239.38.105, 2001:4860:4802:38::69)
-Nameserver: ns-tld5.charlestonroadregistry.com (216.239.60.105, 2001:4860:4805::69)
+Status: client delete prohibited
+Status: client transfer prohibited
+Status: client update prohibited
+Nameserver: NS1.XTOM.COM
+…
 Delegation Signed: yes
-DS Key Tag: 6125
-DS Algorithm: 8
+DS Key Tag: 54357
+DS Algorithm: 13
 DS Digest Type: 2
-DS Digest: 80F8B78D23107153578BAD3800E9543500474E5C30C29698B40A3DB23ED9DA9F
-Last Changed: 2025-04-11T00:00:00+00:00
-Registration: 2014-09-04T00:00:00+00:00
+DS Digest: E3AEAAF9FE3FD3BA24CA96171D8758BC0619E1DFC4DFE8B45DE3AE86C696BE38
+Registration: 1999-12-16T01:44:00Z
+Expiration: 2032-12-16T01:44:00Z
+Last Changed: 2025-11-25T14:35:53Z
+
+Entity Handle: 3968
+Role: registrar
+Name: xTom GmbH
+IANA Registrar ID: 3968
+
+Query from https://rdap.xtom.com/domain/XTOM.COM
+
+Domain Name: xtom.com
+Unicode Name: xtom.com
+Handle: 15339482_DOMAIN_COM-VRSN
+Object Class: domain
+…
+Nameserver: ns1.xtom.com (188.244.98.133, 2a0d:2900:a:0:0:0:98:133)
+Nameserver: ns2.xtom.com (188.244.99.133, 2a0d:2900:a:0:0:0:99:133)
+…
+Role: registrant
+Name: Domain Administrator
+Organization: xTom GmbH
+Email: domains@xtom.com
+…
 ```
 
-### IP Query (with CIDR support)
+### AS number
 
-```bash
-$ rdap 8.8.8.0/24
+```
+$ rdap AS8888
+Abuse contact for `AS8888` is `abuse@xtom.com`
 
-Abuse contact for `8.8.8.0/24` is `network-abuse@google.com`
+Query from https://rdap.db.ripe.net/autnum/8888
 
-Query from https://rdap.arin.net/registry/ip/8.8.8.0/24
-
-Handle: NET-8-8-8-0-2
-Start Address: 8.8.8.0
-End Address: 8.8.8.255
-IP Version: v4
-Name: GOGL
-Type: DIRECT ALLOCATION
-Parent Handle: NET-8-0-0-0-0
+AS Number: AS8888
+Name: XTOM
+Handle: AS8888
+Object Class: autnum
 Status: active
-Port43: whois.arin.net
-last changed: 2023-12-28T17:24:56-05:00
-registration: 2023-12-28T17:24:33-05:00
+Port43: whois.ripe.net
+Last Changed: 2024-08-17T11:00:40Z
+
+Entity Handle: ORG-XPL3-RIPE
+Role: registrant
+Name: xTom Pty Ltd
+…
+Entity Handle: XTAU-RIPE
+Role: administrative
+Role: technical
+Role: abuse
+Name: xTom Global NOC
+Email: abuse@xtom.com
+…
 ```
-### IP Query
 
-```bash
+### IP address or prefix
+
+```
 $ rdap 8.8.8.8
-
 Abuse contact for `8.8.8.8` is `network-abuse@google.com`
 
 Query from https://rdap.arin.net/registry/ip/8.8.8.8
@@ -319,586 +236,569 @@ Type: DIRECT ALLOCATION
 Parent Handle: NET-8-0-0-0-0
 Status: active
 Port43: whois.arin.net
-last changed: 2023-12-28T17:24:56-05:00
-registration: 2023-12-28T17:24:33-05:00
+…
 ```
 
-### AS Number Query
+`rdap 8.8.8.0/24` queries `https://rdap.arin.net/registry/ip/8.8.8.0/24` and returns the same network.
 
-```bash
-$ rdap AS8888
+### TLD
 
-Abuse contact for `AS8888` is `abuse@xtom.com`
+```
+$ rdap google
+Administrative contact for `google` is `iana-contact@google.com`
 
-Query from https://rdap.db.ripe.net/autnum/8888
+Technical contact for `google` is `crr-tech@google.com`
 
-AS Number: AS8888
-Name: XTOM
-Handle: AS8888
-Object Class: autnum
+Query from https://rdap.iana.org/domain/google
+
+Domain Name: google
+Object Class: domain
 Status: active
-Port43: whois.ripe.net
-Registration: 1970-01-01T00:00:00Z
-Last Changed: 2024-08-17T11:00:40Z
-
-Entity Handle: ORG-XPL3-RIPE
-Role: registrant
-Name: xTom Pty Ltd
-Phone: +61280066886
-Address: 81 Campbell St
-2010
-Surry Hills
-AUSTRALIA
-Link: https://rdap.db.ripe.net/entity/ORG-XPL3-RIPE
+Nameserver: ns-tld1.charlestonroadregistry.com (216.239.32.105, 2001:4860:4802:32::69)
+…
+Delegation Signed: yes
+…
 ```
 
-### Entity Query
+With `-v`, the output also includes the detected query type, links, remarks, notices and the server's `rdapConformance` values.
+
+## API Server
+
+`rdap --serve` runs an HTTP API server. It implements the RFC 7482 query paths, so it can be used as an RDAP endpoint by other clients, and adds JSON endpoints for auto-detected queries, abuse contacts and batch lookups. Bootstrap discovery, registrar referrals and caching are handled server-side.
 
 ```bash
-$ rdap -s https://rdap.db.ripe.net -t entity XTOM-RIPE
+# Listen on 127.0.0.1:8888 (default)
+rdap --serve
 
-Query from https://rdap.db.ripe.net/entity/XTOM-RIPE
+# All interfaces, custom port. Always set a token in this case.
+RDAP_API_TOKEN=secret rdap --serve --listen 0.0.0.0 --port 9000
+RDAP_API_TOKEN=secret rdap --serve --listen :: --port 9000
 
-Entity Handle: XTOM-RIPE
-Name: xTom Global NOC
-Email: abuse@xtom.com
-Phone: +49 21197635976
-Address: Kreuzstr.60
-40210 Duesseldorf
-Germany
-Port43: whois.ripe.net
-registration: 2021-08-05T13:48:15Z
-last changed: 2021-10-27T10:21:57Z
-Link: https://rdap.db.ripe.net/entity/XTOM-RIPE
-
-Entity Handle: xtom
-Role: registrant
-Name: xtom
-Organization: ORG-XG42-RIPE
-Link: https://rdap.db.ripe.net/entity/xtom
+# Forward every query to a fixed upstream RDAP server instead of using bootstrap
+rdap -s https://rdap.example/ --serve
 ```
 
-### Verbose Output
+On startup the server logs its listen address and outbound routes. On SIGINT or SIGTERM it stops accepting connections and waits up to 30 seconds for in-flight requests.
+
+### Server options
+
+Every option can also be set through an environment variable; the command-line flag takes precedence. Empty `RDAP_*` variables are treated as unset.
+
+| Flag | Env var | Default | Description |
+|------|---------|---------|-------------|
+| `--serve` | | | Run the API server instead of a single query |
+| `--listen <IP>` | `RDAP_LISTEN` | `127.0.0.1` | Listen address (`0.0.0.0` or `::` for all interfaces) |
+| `--port <PORT>` | `RDAP_PORT` | `8888` | Listen port |
+| `--token <TOKEN>` | `RDAP_API_TOKEN` | none | Require `Authorization: Bearer <TOKEN>` |
+| `--cache-ttl <SECS>` | `RDAP_CACHE_TTL` | `300` | Result cache TTL; `0` disables caching |
+| `--cache-size <MiB>` | `RDAP_CACHE_SIZE` | `256` | Approximate memory budget of the result cache |
+| `--cors` | `RDAP_CORS` | off | Send CORS headers for browser clients |
+| `--max-batch <N>` | `RDAP_MAX_BATCH` | `100` | Maximum queries per `POST /batch` |
+
+`-s/--server`, `--timeout`, `-k/--insecure`, `--no-referral` and the [network options](#network-options) also apply in server mode, where `--max-per-host` defaults to `8`. Log verbosity is controlled by `RUST_LOG` (default `warn`).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/domain/{name}` | Domain or TLD (RDAP) |
+| `GET` | `/ip/{addr}`, `/ip/{addr}/{len}` | IP address or CIDR prefix (RDAP) |
+| `GET` | `/autnum/{asn}` | AS number (RDAP) |
+| `GET` | `/nameserver/{name}` | Nameserver (RDAP) |
+| `GET` | `/entity/{handle}` | Entity (RDAP, requires `-s`) |
+| `GET` | `/domains?name=`, `?nsLdhName=`, `?nsIp=` | Domain search (RDAP, requires `-s`) |
+| `GET` | `/nameservers?name=`, `?ip=` | Nameserver search (RDAP, requires `-s`) |
+| `GET` | `/entities?fn=`, `?handle=` | Entity search (RDAP, requires `-s`) |
+| `GET` | `/help` | RDAP help object for this server |
+| `GET` | `/query/{q}` | Auto-detected query, wrapped in a JSON envelope |
+| `GET` | `/abuse/{q}` | Abuse contact address |
+| `POST` | `/batch` | Multiple queries in one request |
+| `GET` | `/healthz` | Health check, exempt from authentication |
+| `GET` | `/version` | Server name and version |
+
+RDAP endpoints respond with `Content-Type: application/rdap+json`, all others with `application/json`. Responses are compressed with gzip or Brotli when the client sends a matching `Accept-Encoding`.
+
+#### RDAP endpoints
+
+The response body is the upstream RDAP object, passed through without modification. For domains it is the registrar object when the referral succeeds and the registry object otherwise; `?source=registry` always selects the registry object.
 
 ```bash
-$ rdap -v AS8888
-
-→ Query: AS8888
-→ Type:  autnum
-
-⟳ Querying RDAP server...
-
-
-Abuse contact for `AS8888` is `abuse@xtom.com`
-
-Query from https://rdap.db.ripe.net/autnum/8888
-
-AS Number: AS8888
-Name: XTOM
-Handle: AS8888
-Object Class: autnum
-Status: active
-Port43: whois.ripe.net
-Registration: 1970-01-01T00:00:00Z
-Last Changed: 2024-08-17T11:00:40Z
-
-Entity Handle: ORG-XPL3-RIPE
-Role: registrant
-Name: xTom Pty Ltd
-Phone: +61280066886
-Address: 81 Campbell St
-2010
-Surry Hills
-AUSTRALIA
-Link: https://rdap.db.ripe.net/entity/ORG-XPL3-RIPE
-Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
-
-Entity Handle: RIPE-NCC-END-MNT
-Role: registrant
-Name: RIPE-NCC-END-MNT
-Organization: ORG-NCC1-RIPE
-Link: https://rdap.db.ripe.net/entity/RIPE-NCC-END-MNT
-Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
-
-Entity Handle: XTAU-RIPE
-Role: administrative
-Role: technical
-Role: abuse
-Name: xTom Global NOC
-Email: abuse@xtom.com
-Phone: +61 2 8006 6886
-Address: 81 Campbell St
-Surry Hills 2010 NSW
-Australia
-Link: https://rdap.db.ripe.net/entity/XTAU-RIPE
-Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
-
-Entity Handle: xtom
-Role: registrant
-Name: xtom
-Organization: ORG-XG42-RIPE
-Link: https://rdap.db.ripe.net/entity/xtom
-Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
-
-Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-up/AS8888 (rdap-up)
-Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-up/AS8888?status=active (rdap-up rdap-active)
-Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-down/AS8888 (rdap-down)
-Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-top/AS8888 (rdap-top)
-Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-top/AS8888?status=active (rdap-top rdap-active)
-Link: https://rdap.db.ripe.net/autnums/rirSearch1/rdap-bottom/AS8888 (rdap-bottom)
-Link: https://rdap.db.ripe.net/autnum/8888 (self)
-Link: http://www.ripe.net/data-tools/support/documentation/terms (copyright)
-  xTom Pty Ltd
-  
-  ========================================================
-  ===== X X TTTTT OOO M M =====
-  ===== X X T O O MM MM =====
-  ===== X T O O M M M M =====
-  ===== X X T O O M M M =====
-  ===== X X T OOO M M =====
-  ============== BGP COMMUNITY SUPPORT ===================
-  ===== 8888:3002 learned from EQUINIX SYDNEY ====
-  ===== 8888:3003 learned from CT (AS4134) ====
-  ===== 8888:3004 learned from CU (AS10099) ====
-  ===== 8888:3005 learned from CT2 (AS4809) ====
-  ===== 8888:3006 learned from GSL (AS137409) ====
-  ===== 8888:110x Prepend routes to EQUINIX SYDNEY ====
-  ===== 8888:120x Prepend routes to CT (AS4134) ====
-  ===== 8888:130x Prepend routes to CU (AS10099) ====
-  ===== 8888:140x Prepend routes to CT2 (AS4809) ====
-  ===== 8888:150x Prepend routes to GSL (AS137409) ====
-  ===== 8888:666 Blackhole Community ====
-  ==================== LIST OF CONTENTS ==================
-  ===== x=1,2,3 for prepends ====
-  ===== x=0 for DO NOT announce ====
-  ===== x=4 for DO NOT announce Route Servers ====
-  ===== x=5 for DO NOT announce Transits ====
-  ==================== Contacts ==========================
-  ===== Network noc@xtom.com ====
-  ===== Peering peering@xtom.com ====
-  ===== Abuse abuse@xtom.com ====
-  ===== Website https://xtom.com ====
-Notice: Filtered
-  This output has been filtered.
-Notice: Whois Inaccuracy Reporting
-  If you see inaccuracies in the results, please visit:
-  Link: https://www.ripe.net/contact-form?topic=ripe_dbm&show_form=true
-Notice: Source
-  Objects returned came from source
-  RIPE
-Notice: Terms and Conditions
-  This is the RIPE Database query service. The objects are in RDAP format.
-  Link: http://www.ripe.net/db/support/db-terms-conditions.pdf
-
-RDAP Conformance:
-  nro_rdap_profile_asn_flat_0
-  rirSearch1
-  autnums
-  cidr0
-  rdap_level_0
-  nro_rdap_profile_0
-  redacted
+curl http://127.0.0.1:8888/domain/xtom.com
+curl 'http://127.0.0.1:8888/domain/xtom.com?source=registry'
+curl http://127.0.0.1:8888/autnum/8888
+curl http://127.0.0.1:8888/ip/8.8.8.8
+curl http://127.0.0.1:8888/ip/2001:4860::/32
+curl http://127.0.0.1:8888/nameserver/ns1.xtom.com
 ```
+
+`GET /autnum/8888`:
+
+```json
+{
+  "objectClassName": "autnum",
+  "handle": "AS8888",
+  "startAutnum": 8888,
+  "endAutnum": 8888,
+  "name": "XTOM",
+  "status": ["active"],
+  "port43": "whois.ripe.net",
+  "entities": […],
+  "rdapConformance": ["nro_rdap_profile_asn_flat_0", "rirSearch1", "autnums", "cidr0", "rdap_level_0", "nro_rdap_profile_0", "redacted"],
+  …
+}
+```
+
+Any RDAP client can use the server as its endpoint, including this one:
+
+```bash
+rdap -s http://127.0.0.1:8888/ xtom.com
+```
+
+Nameserver lookups are sent to the registry of the nameserver's TLD (`ns1.xtom.com` goes to the `.com` registry). Entity lookups and searches have no bootstrap registry; they require a fixed upstream (`rdap -s <url> --serve`) and return `501` otherwise.
+
+#### `GET /query/{q}`
+
+Applies the same type detection as the CLI: domains, TLDs, IP addresses, abbreviated IPv4, CIDR prefixes, `AS8888` and `8888`.
+
+Query parameters:
+
+- `type`: force a query type, same values as `-t`
+- `source`: `registrar` (default, falls back to the registry), `registry` or `both`
+
+```bash
+curl http://127.0.0.1:8888/query/AS8888
+curl http://127.0.0.1:8888/query/xtom.com
+curl 'http://127.0.0.1:8888/query/xtom.com?source=both'
+```
+
+```json
+{
+  "query": "AS8888",
+  "type": "autnum",
+  "source": "registry",
+  "registry_url": "https://rdap.db.ripe.net/autnum/8888",
+  "registrar_url": null,
+  "result": { "objectClassName": "autnum", "handle": "AS8888", … }
+}
+```
+
+`query` is the normalized query string and `source` identifies the object in `result`. With `source=both`, `result` is replaced by `registry` and `registrar`; `registrar` is `null` if there is no referral or it failed:
+
+```json
+{
+  "query": "xtom.com",
+  "type": "domain",
+  "source": "both",
+  "registry_url": "https://rdap.verisign.com/com/v1/domain/xtom.com",
+  "registrar_url": "https://rdap.xtom.com/domain/XTOM.COM",
+  "registry": { "objectClassName": "domain", "ldhName": "XTOM.COM", … },
+  "registrar": { "objectClassName": "domain", "ldhName": "xtom.com", … }
+}
+```
+
+#### `GET /abuse/{q}`
+
+Returns the abuse contact address. For domains the registrar object is checked first. Accepts `type` like `/query`.
+
+```bash
+curl http://127.0.0.1:8888/abuse/AS8888
+curl http://127.0.0.1:8888/abuse/xtom.com
+```
+
+```json
+{"query":"AS8888","type":"autnum","abuse":"abuse@xtom.com","source_url":"https://rdap.db.ripe.net/autnum/8888"}
+{"query":"xtom.com","type":"domain","abuse":"abuse@xtom.com","source_url":"https://rdap.xtom.com/domain/XTOM.COM"}
+```
+
+If the object exists but has no abuse contact, the response is `200` with `"abuse": null`.
+
+#### `POST /batch`
+
+Request body: `{"queries": [...], "source": "...", "type": "..."}`. `source` and `type` are optional and apply to all queries. Limits are `--max-batch` queries and 64 KiB per body. Duplicate queries are resolved once, with up to 8 lookups in parallel per batch.
+
+The response is always `200` and contains one entry per query, in request order. `data` has the same structure as a `/query` response; `error` is an RDAP error object.
+
+```bash
+curl -X POST http://127.0.0.1:8888/batch \
+  -H 'Content-Type: application/json' \
+  -d '{"queries": ["AS8888", "xtom.com", "xtom.invalid"]}'
+```
+
+```json
+{
+  "results": [
+    { "query": "AS8888", "ok": true, "status": 200, "data": { "query": "AS8888", "type": "autnum", … } },
+    { "query": "xtom.com", "ok": true, "status": 200, "data": { "query": "xtom.com", "type": "domain", … } },
+    { "query": "xtom.invalid", "ok": false, "status": 404,
+      "error": { "description": ["No RDAP server known for xtom.invalid"], "errorCode": 404, "title": "Not Found" } }
+  ]
+}
+```
+
+#### `GET /healthz` and `GET /version`
+
+```bash
+curl http://127.0.0.1:8888/healthz
+# {"status":"ok"}
+
+curl http://127.0.0.1:8888/version
+# {"name":"rdap","version":"1.1.0"}
+```
+
+### Errors
+
+Errors are returned as RDAP error objects (RFC 7480, section 5.3) with the corresponding HTTP status. On RDAP endpoints they include `rdapConformance`.
+
+```json
+{"description":["No RDAP record for nonexistent-xtom.com"],"errorCode":404,"rdapConformance":["rdap_level_0"],"title":"Not Found"}
+```
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Invalid query, `type`, `source` or batch body; upstream returned 400 or 422 |
+| `401` | Missing or invalid token (with `WWW-Authenticate: Bearer`) |
+| `403` | Loopback listener without a token received a non-local `Host` header (DNS rebinding protection) |
+| `404` | Object not found, no RDAP server known for the query, or unknown path |
+| `405` | Method not allowed |
+| `413` | Too many batch queries, or request body larger than 64 KiB |
+| `429` | Upstream RDAP server rate-limited the request |
+| `501` | Query type requires a fixed upstream (`-s`): entities and searches |
+| `502` | Upstream error, malformed upstream response, or proxy failure |
+| `504` | Upstream timeout, or request exceeded 300 seconds |
+
+### Authentication
+
+Authentication is disabled by default. When a token is configured, every endpoint except `/healthz` requires it:
+
+```bash
+RDAP_API_TOKEN=secret rdap --serve
+curl -H 'Authorization: Bearer secret' http://127.0.0.1:8888/query/xtom.com
+```
+
+Prefer `RDAP_API_TOKEN` over `--token`: command-line arguments are visible to other users through `ps`. Leading and trailing whitespace is stripped. An empty `RDAP_API_TOKEN` disables authentication and logs a warning. Tokens are compared in constant time.
+
+Without a token on a loopback address, the server only accepts requests whose `Host` header is `localhost`, `*.localhost` or a loopback IP, which blocks DNS rebinding attacks from web pages.
+
+### Caching
+
+Results are cached in memory for `--cache-ttl` seconds, keyed by query type and normalized query. `/ip/8.8.8.8`, `/query/8.8.8.8` and `/abuse/8.8.8.8` share one cache entry regardless of `source`. Negative answers ("not found") and domain results with a failed registrar referral are cached for at most 60 seconds. Other errors and timeouts are not cached. Concurrent requests for the same key are coalesced into a single upstream query.
+
+### Security
+
+- The default listen address is `127.0.0.1`. Binding to another address without a token logs a warning but is allowed. An unauthenticated public server lets anyone send queries from your addresses and proxies, which can get them rate-limited or blocked by RDAP operators.
+- The server speaks plain HTTP and has no per-client rate limiting. Exposed deployments should sit behind a TLS-terminating reverse proxy with rate limits (see [Exposing the server](#exposing-the-server)).
+- CORS headers are only sent with `--cors`: any origin, `GET` and `POST`, `Authorization` and `Content-Type` request headers.
+- Credentials in proxy and upstream URLs are never logged or returned to clients.
+- Registrar referrals and HTTP redirects from upstream responses are only followed to public `https` URLs: no loopback, private, link-local or cloud metadata addresses, no downgrade from `https` to `http`, and at most 3 redirects. An explicitly configured upstream on a private address (`-s http://10.0.0.5/`) is not subject to these checks.
+- Resource limits: request headers must arrive within 10 seconds (also between keep-alive requests); at most 1024 concurrent connections (or half the open-file limit, whichever is lower) and 64 per client IP; upstream responses up to 4 MiB; at most 32 concurrent batches across all clients. A batch is cancelled when the client disconnects.
+
+## Network Options
+
+These options control outbound connections to RDAP servers and to IANA for bootstrap files, both for single queries and in server mode.
+
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--interface <NAME>` | `RDAP_INTERFACE` | Bind outbound connections to a network interface (e.g. `eth1`) |
+| `--bind <IP>[,<IP>...]` | `RDAP_BIND` | Source address(es); multiple addresses are rotated |
+| `--proxy <URL>[,<URL>...]` | `RDAP_PROXY` | Proxy URL(s); multiple proxies are rotated |
+| `--max-per-host <N>` | `RDAP_MAX_PER_HOST` | Concurrent requests per upstream host (unlimited by default, 8 with `--serve`) |
+
+```bash
+rdap --interface eth1 xtom.com
+rdap --bind 203.0.113.10 xtom.com
+rdap --bind 2001:db8::10 AS8888
+
+# Rotate across source addresses
+rdap --serve --bind 203.0.113.10,203.0.113.11
+
+# Proxies. Pass credentials through the environment, not the command line.
+rdap --proxy socks5h://127.0.0.1:1080 xtom.com
+RDAP_PROXY=socks5h://user:pass@10.0.0.1:1080,socks5h://10.0.0.2:1080 rdap --serve
+
+rdap --serve --max-per-host 4
+```
+
+- Supported proxy schemes: `socks5://`, `socks5h://` (DNS resolved by the proxy), `http://` and `https://`, with optional `user:pass@` credentials.
+- Rotation: each request starts on the next route in round-robin order. With `--proxy`, the routes are the proxies; otherwise they are the `--bind` addresses. `--interface` applies to all routes.
+- Failover: if a route fails to connect (connection error, connect timeout or proxy error), the request is retried on the next route, up to 3 attempts or the number of routes. A route that has just failed is moved to the end of the rotation for a short cooldown period. Requests that received an HTTP response, or timed out while waiting for one, are not retried.
+- A source address only connects to destinations of the same address family; the host's default address is never used as a fallback.
+- `--bind` and `--proxy` accept repeated flags or comma-separated lists.
+- `rdap --update` uses the same routes.
+- `--interface` uses `SO_BINDTODEVICE` on Linux and may require `CAP_NET_RAW`. Unsupported options or invalid proxy URLs cause rdap to exit with an error at startup.
+
+## Docker Deployment
+
+### Image
+
+The release workflow publishes the image for `linux/amd64` and `linux/arm64` to two registries with identical tags:
+
+- Docker Hub: `xtomcom/rdap`
+- GitHub Container Registry: `ghcr.io/xtomcom/rdap`
+
+Tags are `latest`, `X.Y.Z`, `X.Y` and `X` (for example `1.1.0`, `1.1`, `1`). The examples below use Docker Hub; substitute `ghcr.io/xtomcom/rdap` to pull from GHCR.
+
+The runtime base is `gcr.io/distroless/cc-debian13:nonroot`, which contains glibc, libgcc and CA certificates but no shell or package manager. The binary is built on Debian 13 (trixie), matching the runtime glibc. The container runs as `nonroot` (UID/GID 65532) with `HOME=/home/nonroot`.
+
+The entrypoint is `rdap` and the default command is `--serve`. The image sets `RDAP_LISTEN=0.0.0.0`, so the server listens on `0.0.0.0:8888` inside the container; override `RDAP_LISTEN` or `RDAP_PORT` as needed. Configs downloaded with `rdap --update` are stored in `/home/nonroot/.config/rdap`.
+
+### Quick start
+
+```bash
+# API server, published on localhost only
+docker run -d --name rdap --restart unless-stopped \
+  -p 127.0.0.1:8888:8888 -v rdap-data:/home/nonroot \
+  xtomcom/rdap
+curl http://127.0.0.1:8888/query/AS8888
+
+# One-off queries: arguments replace the default --serve
+docker run --rm xtomcom/rdap AS8888
+docker run --rm xtomcom/rdap -f json-pretty xtom.com
+```
+
+### Compose
+
+`compose.yaml` is the reference deployment. It pulls `xtomcom/rdap:latest` from Docker Hub; a commented `image:` line switches to `ghcr.io/xtomcom/rdap:latest`. Settings are read from `.env`:
+
+```bash
+cp .env.example .env    # edit as needed
+docker compose up -d
+```
+
+`.env.example` documents the common settings: API token, cache size and TTL, proxies and source addresses, CORS, batch size and `RUST_LOG`. Every variable from [Server options](#server-options) and [Network options](#network-options) is supported. `HOST_PORT` (default `8888`) is used only by Compose and sets the host port, which is bound to `127.0.0.1`.
+
+The service is configured with:
+
+- a read-only root filesystem and a tmpfs on `/tmp`
+- `cap_drop: [ALL]` and `no-new-privileges`
+- `mem_limit: 1g` and `pids_limit: 512`; the result cache is bounded by `RDAP_CACHE_SIZE` (default 256 MiB), so increase the memory limit if you increase the cache
+- `restart: unless-stopped`
+- the named volume `rdap-data` mounted at `/home/nonroot`, so configs from `rdap --update` persist across restarts and upgrades
+
+Common operations:
+
+```bash
+docker compose logs -f                        # startup output and warnings
+docker compose run --rm rdap --update         # download current bootstrap/TLD configs into the volume
+docker compose restart rdap                   # apply them
+docker compose pull && docker compose up -d   # upgrade
+docker compose down                           # stop (the volume is kept)
+```
+
+To pin a version, set the image in `compose.yaml` to `xtomcom/rdap:1.1.0` (exact release) or `xtomcom/rdap:1.1` (patch updates only), or the same tags under `ghcr.io/xtomcom/rdap`. Configs in the volume take precedence over those built into the image; run `--update` again after upgrading, or remove the volume to revert to the built-in configs.
+
+### Exposing the server
+
+Do not publish port 8888 on a public address without a token. To serve other hosts:
+
+1. Set `RDAP_API_TOKEN` in `.env` (for example, generate one with `openssl rand -hex 32`).
+2. Keep the port bound to `127.0.0.1` and put a TLS reverse proxy with rate limiting in front of it. If the proxy runs as a container on the same Docker network, it can reach `rdap:8888` directly and the port does not need to be published.
+
+nginx example:
+
+```nginx
+limit_req_zone $binary_remote_addr zone=rdap:10m rate=5r/s;
+
+server {
+    listen 443 ssl;
+    server_name rdap.example.net;
+    # ssl_certificate / ssl_certificate_key ...
+
+    location / {
+        limit_req zone=rdap burst=20 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:8888;
+    }
+}
+```
+
+Clients authenticate with `Authorization: Bearer <token>`. `/healthz` remains unauthenticated for monitoring.
+
+### Outbound proxies and source addresses
+
+`RDAP_PROXY` works without changes, provided the proxy is reachable from the container. Inside the container `127.0.0.1` refers to the container itself; use the host's address or `host.docker.internal` (on Linux, add `extra_hosts: ["host.docker.internal:host-gateway"]`).
+
+`RDAP_BIND` and `RDAP_INTERFACE` refer to host addresses and interfaces, which are not visible on the default bridge network. Use `network_mode: host` and remove the `ports:` section. The server then listens directly on the host, so set `RDAP_LISTEN=127.0.0.1` or a token in `.env`.
+
+### Health checks
+
+The image contains no shell or `curl`, so a Docker `HEALTHCHECK` command cannot run inside it. Probe `GET /healthz` externally instead, from a reverse proxy, load balancer, monitoring system or orchestrator HTTP probe. It returns `200 {"status":"ok"}` and does not require a token.
+
+### Building the image
+
+```bash
+docker build -t rdap .
+
+# Multi-arch build pushed to your own registry
+docker buildx build --platform linux/amd64,linux/arm64 -t registry.example.com/rdap:1.1.0 --push .
+```
+
+To use a local build with Compose, uncomment `build: .` in `compose.yaml` and run `docker compose up -d --build`.
+
+## systemd Service
+
+The deb and rpm packages install `rdap.service`, which runs `rdap --serve` under a dynamic unprivileged user with systemd sandboxing, `MemoryMax=1G`, `TasksMax=512` and outbound access to link-local and cloud metadata addresses denied. The unit is not enabled or started on installation.
+
+```bash
+sudo editor /etc/default/rdap     # listen address, token, proxies, ...
+sudo systemctl enable --now rdap
+sudo systemctl restart rdap       # after configuration changes
+systemctl status rdap
+journalctl -u rdap -f
+sudo systemctl disable --now rdap
+```
+
+`/etc/default/rdap` lists every `RDAP_*` variable, commented out with its default value, and is preserved across upgrades. Its mode is `0600` because it may contain the API token or proxy credentials. Flags without an environment variable (such as `--timeout` or `-s`) go in `RDAP_ARGS`. For other changes, use `systemctl edit rdap` rather than editing the unit file.
+
+The service's `$HOME` is its state directory, `/var/lib/rdap`. It also reads system-wide configs from `/etc/rdap/`. To provide newer configs than the built-in ones, run `rdap --update` as any user and copy the files there:
+
+```bash
+rdap --update
+sudo mkdir -p /etc/rdap
+sudo cp ~/.config/rdap/config.json ~/.config/rdap/tlds.json ~/.config/rdap/tlds.txt /etc/rdap/
+sudo systemctl restart rdap
+```
+
+If `--interface` fails with "Operation not permitted", grant `CAP_NET_RAW` as described in the unit file.
 
 ## Library Usage
 
-Add this to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-rdap = { git = "https://github.com/xtomcom/rdap.git" }
-tokio = { version = "1.49", features = ["full"] }
+# default-features = false excludes the API server and its dependencies
+rdap = { git = "https://github.com/xtomcom/rdap.git", tag = "v1.1.0", default-features = false }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-Or use a specific version/branch:
+Use `branch = "main"` or `rev = "<commit>"` instead of `tag` to track other revisions. More complete programs are in [`examples/`](examples) (`cargo run --example basic_query`).
 
-```toml
-[dependencies]
-# Use main branch
-rdap = { git = "https://github.com/xtomcom/rdap.git", branch = "main" }
-
-# Or use a specific tag (when available)
-# rdap = { git = "https://github.com/xtomcom/rdap.git", tag = "v0.1.0" }
-
-# Or use a specific commit
-# rdap = { git = "https://github.com/xtomcom/rdap.git", rev = "abc123" }
-
-tokio = { version = "1.49", features = ["full"] }
-```
-
-### Basic Query
+### Basic query
 
 ```rust
-use rdap::{RdapClient, RdapRequest, QueryType};
+use rdap::display::RdapDisplay;
+use rdap::{QueryType, RdapClient, RdapRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a client
     let client = RdapClient::new()?;
-    
-    // Query a domain
-    let request = RdapRequest::new(QueryType::Domain, "example.com");
+    let request = RdapRequest::new(QueryType::Domain, "xtom.com");
     let result = client.query(&request).await?;
-    
-    // Display with colored output
-    use rdap::display::RdapDisplay;
-    result.display(false); // false = non-verbose
-    
+    result.display(false); // formatted text output; true = verbose
     Ok(())
 }
 ```
 
-### Auto-Detection
+`query` returns the registrar object when the referral succeeds and the registry object otherwise.
+
+### Type detection and typed results
 
 ```rust
-use rdap::{RdapClient, RdapRequest};
+use rdap::{RdapClient, RdapObject, RdapRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = RdapClient::new()?;
-    
-    // Auto-detect query type
-    let query = "8.8.8.8";
-    let query_type = RdapRequest::detect_type(query)?;
-    
-    let request = RdapRequest::new(query_type, query);
-    let result = client.query(&request).await?;
-    
-    // Process the result based on type
-    match result {
-        rdap::RdapObject::Domain(domain) => {
-            println!("Domain: {}", domain.ldh_name.unwrap_or_default());
-        }
-        rdap::RdapObject::IpNetwork(ip) => {
-            println!("IP Network: {}", ip.name.unwrap_or_default());
-        }
-        rdap::RdapObject::Autnum(asn) => {
-            println!("AS Number: AS{}", asn.start_autnum.unwrap_or(0));
-        }
-        _ => {}
+
+    let query = "AS8888";
+    let request = RdapRequest::new(RdapRequest::detect_type(query)?, query);
+
+    match client.query(&request).await? {
+        RdapObject::Domain(d) => println!("Domain: {}", d.ldh_name.unwrap_or_default()),
+        RdapObject::IpNetwork(n) => println!(
+            "{} - {} {}",
+            n.start_address.unwrap_or_default(),
+            n.end_address.unwrap_or_default(),
+            n.name.unwrap_or_default()
+        ),
+        RdapObject::Autnum(a) => println!("AS{}", a.start_autnum.unwrap_or(0)),
+        other => println!("{}", serde_json::to_string_pretty(&other)?),
     }
-    
     Ok(())
 }
 ```
 
-### Custom Server
+### Registry and registrar data
 
 ```rust
-use rdap::{RdapClient, RdapRequest, QueryType};
+use rdap::{QueryType, RdapClient, RdapObject, RdapRequest};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = RdapClient::new()?;
+    let request = RdapRequest::new(QueryType::Domain, "xtom.com");
+    let result = client.query_with_referral(&request).await?;
+
+    println!("Registry: {}", result.registry_url);
+    if let Some(url) = &result.registrar_url {
+        println!("Registrar: {url}");
+    }
+
+    if let RdapObject::Domain(domain) = &result.registry {
+        for ns in &domain.nameservers {
+            println!("Nameserver: {}", ns.ldh_name.as_deref().unwrap_or_default());
+        }
+        for event in &domain.events {
+            println!("{}: {}", event.action, event.date);
+        }
+        for entity in &domain.entities {
+            if let Some(vcard) = &entity.vcard {
+                println!("{:?}: {}", entity.roles, vcard.name().unwrap_or_default());
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+### Network options, fixed server, error handling
+
+```rust
+use rdap::{NetOptions, QueryType, RdapClient, RdapError, RdapRequest};
+use std::time::Duration;
 use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = RdapClient::new()?;
-    
-    // Use a specific RDAP server
-    let server = Url::parse("https://rdap.verisign.com/com/v1")?;
-    let request = RdapRequest::new(QueryType::Domain, "example.com")
-        .with_server(server);
-    
-    let result = client.query(&request).await?;
-    
-    Ok(())
-}
-```
+    let opts = NetOptions {
+        timeout: Duration::from_secs(10),
+        proxies: vec!["socks5h://127.0.0.1:1080".into()],
+        ..NetOptions::default()
+    };
+    let client = RdapClient::with_options(&opts)?.with_follow_referral(false);
 
-### JSON Output
+    let server = Url::parse("https://rdap.verisign.com/com/v1/")?;
+    let request = RdapRequest::new(QueryType::Domain, "xtom.com").with_server(server);
 
-```rust
-use rdap::{RdapClient, RdapRequest, QueryType};
-use serde_json;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = RdapClient::new()?;
-    let request = RdapRequest::new(QueryType::Domain, "example.com");
-    let result = client.query(&request).await?;
-    
-    // Serialize to JSON
-    let json = serde_json::to_string_pretty(&result)?;
-    println!("{}", json);
-    
-    Ok(())
-}
-```
-
-### Working with Domain Data
-
-```rust
-use rdap::{RdapClient, RdapRequest, QueryType, RdapObject};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = RdapClient::new()?;
-    let request = RdapRequest::new(QueryType::Domain, "example.com");
-    let result = client.query(&request).await?;
-    
-    if let RdapObject::Domain(domain) = result {
-        // Access domain properties
-        println!("Domain: {}", domain.ldh_name.unwrap_or_default());
-        
-        // Check status
-        for status in &domain.status {
-            println!("Status: {}", status);
-        }
-        
-        // List nameservers
-        for ns in &domain.nameservers {
-            if let Some(name) = &ns.ldh_name {
-                println!("Nameserver: {}", name);
-            }
-        }
-        
-        // Check DNSSEC
-        if let Some(dnssec) = &domain.secure_dns {
-            if let Some(signed) = dnssec.delegation_signed {
-                println!("DNSSEC: {}", if signed { "Signed" } else { "Not signed" });
-            }
-        }
-        
-        // Access entities (registrar, registrant, etc.)
-        for entity in &domain.entities {
-            if let Some(handle) = &entity.handle {
-                println!("Entity: {} (roles: {:?})", handle, entity.roles);
-            }
-            
-            // Access vCard data
-            if let Some(vcard) = &entity.vcard {
-                if let Some(name) = vcard.name() {
-                    println!("  Name: {}", name);
-                }
-                if let Some(email) = vcard.email() {
-                    println!("  Email: {}", email);
-                }
-            }
-        }
-        
-        // Access events
-        for event in &domain.events {
-            println!("Event: {} at {}", event.action, event.date);
-        }
-    }
-    
-    Ok(())
-}
-```
-
-### Working with IP Network Data
-
-```rust
-use rdap::{RdapClient, RdapRequest, QueryType, RdapObject};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = RdapClient::new()?;
-    let request = RdapRequest::new(QueryType::Ip, "8.8.8.8");
-    let result = client.query(&request).await?;
-    
-    if let RdapObject::IpNetwork(network) = result {
-        println!("Network: {}", network.name.unwrap_or_default());
-        println!("Range: {} - {}", 
-            network.start_address.unwrap_or_default(),
-            network.end_address.unwrap_or_default()
-        );
-        println!("Type: {}", network.network_type.unwrap_or_default());
-        
-        if let Some(country) = &network.country {
-            println!("Country: {}", country);
-        }
-    }
-    
-    Ok(())
-}
-```
-
-### Working with AS Number Data
-
-```rust
-use rdap::{RdapClient, RdapRequest, QueryType, RdapObject};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = RdapClient::new()?;
-    let request = RdapRequest::new(QueryType::Autnum, "AS15169");
-    let result = client.query(&request).await?;
-    
-    if let RdapObject::Autnum(asn) = result {
-        if let Some(start) = asn.start_autnum {
-            println!("AS Number: AS{}", start);
-        }
-        println!("Name: {}", asn.name.unwrap_or_default());
-        println!("Type: {}", asn.as_type.unwrap_or_default());
-        
-        if let Some(country) = &asn.country {
-            println!("Country: {}", country);
-        }
-    }
-    
-    Ok(())
-}
-```
-
-### Error Handling
-
-```rust
-use rdap::{RdapClient, RdapRequest, QueryType, RdapObject, RdapError};
-
-#[tokio::main]
-async fn main() {
-    let client = RdapClient::new().unwrap();
-    let request = RdapRequest::new(QueryType::Domain, "example.com");
-    
     match client.query(&request).await {
-        Ok(result) => {
-            // Handle successful response
-            match result {
-                RdapObject::Error(err) => {
-                    eprintln!("RDAP Error: {}", err.title.unwrap_or_default());
-                    for desc in &err.description {
-                        eprintln!("  {}", desc);
-                    }
-                }
-                _ => {
-                    use rdap::display::RdapDisplay;
-                    result.display(false);
-                }
-            }
-        }
-        Err(e) => {
-            match e {
-                RdapError::Bootstrap(msg) => {
-                    eprintln!("Bootstrap error: {}", msg);
-                }
-                RdapError::Http(err) => {
-                    eprintln!("HTTP error: {}", err);
-                }
-                RdapError::InvalidQuery(msg) => {
-                    eprintln!("Invalid query: {}", msg);
-                }
-                _ => {
-                    eprintln!("Error: {}", e);
-                }
-            }
-        }
+        Ok(object) => println!("{}", serde_json::to_string_pretty(&object)?),
+        Err(RdapError::NotFound) => eprintln!("not found"),
+        Err(e) => eprintln!("error: {e}"),
     }
-}
-```
-
-### Advanced: Custom Timeout and Configuration
-
-```rust
-use rdap::{RdapClient, RdapRequest, QueryType};
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create client with custom timeout
-    let client = RdapClient::new()?
-        .with_timeout(Duration::from_secs(30));
-    
-    let request = RdapRequest::new(QueryType::Domain, "example.com");
-    let result = client.query(&request).await?;
-    
     Ok(())
 }
 ```
 
-### Integration Example: Web Service
-
-Here's an example of using the RDAP library in a web service:
-
-```rust
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    response::Json,
-    routing::get,
-    Router,
-};
-use rdap::{RdapClient, RdapRequest};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-// Shared RDAP client
-struct AppState {
-    rdap_client: Arc<Mutex<RdapClient>>,
-}
-
-#[tokio::main]
-async fn main() {
-    let client = RdapClient::new().unwrap();
-    let state = Arc::new(AppState {
-        rdap_client: Arc::new(Mutex::new(client)),
-    });
-
-    let app = Router::new()
-        .route("/rdap/:query", get(query_handler))
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .unwrap();
-    
-    axum::serve(listener, app).await.unwrap();
-}
-
-async fn query_handler(
-    Path(query): Path<String>,
-    state: axum::extract::State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let client = state.rdap_client.lock().await;
-    
-    // Auto-detect query type
-    let query_type = RdapRequest::detect_type(&query)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    
-    let request = RdapRequest::new(query_type, &query);
-    
-    match client.query(&request).await {
-        Ok(result) => {
-            let json = serde_json::to_value(&result)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            Ok(Json(json))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
-    }
-}
-```
+`NetOptions` also provides `insecure`, `interface`, `bind` and `max_per_host`. `RdapClient::with_timeout` overrides the request timeout on an existing client.
 
 ## Configuration
 
-The RDAP client uses a configuration system with the following priority (highest to lowest):
+Configuration files are resolved in the following order; the first match wins:
 
-1. `~/.config/rdap/*.local.json` - User local overrides (never overwritten by updates)
-2. `~/.config/rdap/*.json` - Downloaded configs (updated via `rdap --update`)
-3. `/etc/rdap/*.json` - System-wide configs
-4. Built-in defaults (embedded in binary)
+1. `~/.config/rdap/*.local.json`: user overrides, never modified by updates
+2. `~/.config/rdap/*.json`: files downloaded by `rdap --update`
+3. `/etc/rdap/*.json`: system-wide configuration
+4. Built-in defaults compiled into the binary
 
-### Configuration Files
+Files:
 
-- **config.json** - Bootstrap URLs for IANA RDAP service discovery
-- **tlds.json** - TLD overrides for ccTLDs not in IANA bootstrap
-- **config.local.json** - Your custom bootstrap config (optional, survives updates)
-- **tlds.local.json** - Your custom TLD overrides (merged on top of tlds.json)
+- `config.json`: IANA bootstrap URLs
+- `tlds.json`: RDAP servers for TLDs missing from the IANA bootstrap
+- `tlds.txt`: IANA TLD list, used to detect TLD queries such as `rdap google`
+- `config.local.json`: user bootstrap configuration, replaces `config.json`
+- `tlds.local.json`: user TLD overrides, merged over `tlds.json`
 
-### Updating Configs
+`rdap --update` (or `-u`) downloads `config.json` and `tlds.json` from the `main` branch of this repository and `tlds.txt` from `https://data.iana.org/TLD/tlds-alpha-by-domain.txt` into `~/.config/rdap/`. `*.local.json` files are not modified.
 
-```bash
-# Update configs from GitHub
-rdap --update
-rdap -u
-```
-
-This downloads:
-- `config.json` and `tlds.json` from the GitHub repository
-- `tlds.txt` (IANA TLD list) from `https://data.iana.org/TLD/tlds-alpha-by-domain.txt`
-
-Your `*.local.json` files are preserved.
-
-### Custom TLD Overrides
-
-Create `~/.config/rdap/tlds.local.json` to add your own TLD overrides:
+Example `~/.config/rdap/tlds.local.json`:
 
 ```json
 {
@@ -907,71 +807,53 @@ Create `~/.config/rdap/tlds.local.json` to add your own TLD overrides:
 }
 ```
 
-These will be merged on top of the base `tlds.json` configuration.
-
-## Architecture
+## Project Layout
 
 ```
 src/
-├── lib.rs           # Library entry point
-├── main.rs          # CLI entry point
-├── error.rs         # Error types
-├── config.rs        # Configuration management
-├── models/          # RDAP data models
-│   ├── domain.rs
-│   ├── entity.rs
-│   ├── autnum.rs
-│   ├── ip_network.rs
-│   ├── nameserver.rs
-│   └── ...
-├── client.rs        # RDAP client
-├── request.rs       # Request builder
-├── bootstrap.rs     # Bootstrap service discovery
-├── cache.rs         # Bootstrap cache
-├── ip.rs            # IP address normalization and CIDR handling
-└── display.rs       # Pretty output formatting
-
-config/
-├── config.json      # Default bootstrap URLs
-├── tlds.json        # Default TLD overrides for ccTLDs
-└── tlds.txt         # IANA TLD list for TLD query detection
+├── main.rs          # CLI
+├── lib.rs           # library entry point
+├── client.rs        # RdapClient: queries, referrals
+├── request.rs       # RdapRequest, QueryType, type detection
+├── bootstrap.rs     # IANA bootstrap discovery (in-memory cache)
+├── config.rs        # config loading and --update
+├── net.rs           # outbound HTTP: proxies, bind/interface, rotation, per-host limits
+├── display.rs       # text output
+├── ip.rs            # IP normalization and CIDR handling
+├── cache.rs         # disk cache helper (unused)
+├── error.rs
+├── models/          # RDAP objects: domain, entity, autnum, ip_network, nameserver, ...
+└── server/          # API server (rdap --serve, feature `server`)
+config/              # built-in config.json, tlds.json, tlds.txt
+examples/            # library examples
+packaging/           # systemd unit, /etc/default/rdap, Arch PKGBUILDs
+Dockerfile           # container image
+compose.yaml         # reference Compose deployment (settings in .env, see .env.example)
 ```
 
-## RFCs Implemented
+## Standards
 
-- [RFC 7480](https://tools.ietf.org/html/rfc7480) - HTTP Usage in RDAP
-- [RFC 7482](https://tools.ietf.org/html/rfc7482) - RDAP Query Format
-- [RFC 7483](https://tools.ietf.org/html/rfc7483) - JSON Responses for RDAP
-- [RFC 7484](https://tools.ietf.org/html/rfc7484) - Finding the Authoritative RDAP Service
-- [RFC 6350](https://tools.ietf.org/html/rfc6350) - vCard Format
-- [RFC 7095](https://tools.ietf.org/html/rfc7095) - jCard
-
-## Comparison with Go Version
-
-| Feature | Go Version | Rust Version |
-|---------|-----------|--------------|
-| Performance | ⚡ Fast | ⚡⚡ Very Fast |
-| Memory Usage | Good | Excellent |
-| Colored Output | Basic | Advanced |
-| Table Formatting | None | Beautiful |
-| Async Support | Yes | Yes (Tokio) |
-| Type Safety | Runtime | Compile-time |
-| Binary Size | ~8MB | ~4MB (stripped) |
+- [RFC 7480](https://www.rfc-editor.org/rfc/rfc7480): HTTP Usage in the Registration Data Access Protocol
+- [RFC 7482](https://www.rfc-editor.org/rfc/rfc7482): RDAP Query Format
+- [RFC 7483](https://www.rfc-editor.org/rfc/rfc7483): JSON Responses for RDAP
+- [RFC 7484](https://www.rfc-editor.org/rfc/rfc7484): Finding the Authoritative RDAP Service
+- [RFC 6350](https://www.rfc-editor.org/rfc/rfc6350): vCard Format Specification
+- [RFC 7095](https://www.rfc-editor.org/rfc/rfc7095): jCard, the JSON Format for vCard
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Bug reports and pull requests are accepted on [GitHub](https://github.com/xtomcom/rdap). Before submitting, run `cargo fmt`, `cargo clippy -- -D warnings` and `cargo test`.
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT, see [LICENSE](LICENSE).
 
-## Author
+## Authors
 
-xTom & Akaere Networks
+xTom and Akaere Networks
 
 ## Links
 
-- Original Go version: https://github.com/openrdap/rdap
-- IANA RDAP Bootstrap: https://data.iana.org/rdap/
-- RDAP Working Group: https://datatracker.ietf.org/wg/weirds/
+- Original Go client: https://github.com/openrdap/rdap
+- IANA RDAP bootstrap registries: https://data.iana.org/rdap/
+- IETF REGEXT working group: https://datatracker.ietf.org/wg/regext/

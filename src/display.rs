@@ -46,7 +46,7 @@ impl RdapDisplayWithQuery for RdapObject {
 }
 
 /// Extract contact email by role from entities
-fn find_contact_by_role(entities: &[Entity], role: &str) -> Option<String> {
+pub fn find_contact_by_role(entities: &[Entity], role: &str) -> Option<String> {
     for entity in entities {
         // Check if this entity has the specified role
         if entity
@@ -68,7 +68,7 @@ fn find_contact_by_role(entities: &[Entity], role: &str) -> Option<String> {
 }
 
 /// Extract abuse contact email from entities
-fn find_abuse_contact(entities: &[Entity]) -> Option<String> {
+pub fn find_abuse_contact(entities: &[Entity]) -> Option<String> {
     find_contact_by_role(entities, "abuse")
 }
 

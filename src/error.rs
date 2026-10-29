@@ -18,6 +18,14 @@ pub enum RdapError {
     #[error("Bootstrap error: {0}")]
     Bootstrap(String),
 
+    /// Bootstrap knows no RDAP server for this query (e.g. a TLD without RDAP)
+    #[error("No RDAP server known for {0}")]
+    NoServer(String),
+
+    /// This query type can't be bootstrapped and needs an explicit server
+    #[error("{0} queries require an explicit server (-s/--server)")]
+    NeedsServer(String),
+
     #[error("Invalid query: {0}")]
     InvalidQuery(String),
 
@@ -45,4 +53,16 @@ pub enum RdapError {
 
     #[error("{0}")]
     Other(String),
+
+    /// Connecting through a proxy failed (message has credentials redacted)
+    #[error("Proxy error: {0}")]
+    Proxy(String),
+
+    /// The response body exceeded the configured size limit
+    #[error("Response body exceeds {limit} bytes")]
+    BodyTooLarge { limit: usize },
+
+    /// Invalid network configuration (proxy URL, interface, ...), reported at startup
+    #[error("Network configuration error: {0}")]
+    Config(String),
 }

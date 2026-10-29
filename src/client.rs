@@ -4,14 +4,16 @@ use crate::bootstrap::BootstrapClient;
 use crate::error::{RdapError, Result};
 use crate::ip;
 use crate::models::{Domain, RdapObject};
+use crate::net::{HttpPool, NetOptions};
 use crate::request::{QueryType, RdapRequest};
-use reqwest::Client;
+use serde::Serialize;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
 /// RDAP query result with optional registrar data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RdapQueryResult {
     /// Primary result from registry
     pub registry: RdapObject,
@@ -21,38 +23,70 @@ pub struct RdapQueryResult {
     pub registrar: Option<RdapObject>,
     /// URL of the registrar RDAP server used (if any)
     pub registrar_url: Option<Url>,
+    /// Registry response exactly as received, including fields the models don't cover
+    #[serde(skip)]
+    pub registry_json: serde_json::Value,
+    /// Registrar response exactly as received
+    #[serde(skip)]
+    pub registrar_json: Option<serde_json::Value>,
+    /// A registrar referral was found but fetching it failed, so this
+    /// registry-only result may be incomplete (and shouldn't be cached long)
+    #[serde(skip)]
+    pub registrar_failed: bool,
+}
+
+/// Upstream error descriptions kept per error
+const MAX_ERROR_LINES: usize = 10;
+/// Characters kept per upstream error line
+const MAX_ERROR_LINE_CHARS: usize = 300;
+
+/// Make upstream error text safe to log and show: no control characters
+/// (forged log lines), bounded length
+fn sanitize_upstream_text(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_ERROR_LINE_CHARS)
+        .collect()
 }
 
 /// RDAP client
 pub struct RdapClient {
-    http_client: Client,
+    http: Arc<HttpPool>,
     bootstrap: BootstrapClient,
-    timeout: Duration,
+    /// Per-request timeout override for RDAP queries (`None` = pool default)
+    timeout: Option<Duration>,
     follow_referral: bool,
 }
 
 impl RdapClient {
-    /// Create a new RDAP client
+    /// Create a new RDAP client with default network options
     pub fn new() -> Result<Self> {
-        let http_client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .user_agent(concat!("rdap-rust/", env!("CARGO_PKG_VERSION")))
-            .build()?;
+        Self::with_options(&NetOptions::default())
+    }
 
-        let bootstrap = BootstrapClient::new()?;
+    /// Create a new RDAP client with custom network options (timeout,
+    /// proxies, source address, ...)
+    pub fn with_options(opts: &NetOptions) -> Result<Self> {
+        let http = Arc::new(HttpPool::new(opts)?);
+        let bootstrap = BootstrapClient::with_pool(Arc::clone(&http));
 
         Ok(Self {
-            http_client,
+            http,
             bootstrap,
-            timeout: Duration::from_secs(30),
+            timeout: None,
             follow_referral: true, // Enable by default
         })
     }
 
-    /// Set timeout
+    /// Set timeout for RDAP queries
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
+    }
+
+    /// Redacted labels of the outbound routes (proxy / source address) in rotation
+    pub fn route_labels(&self) -> Vec<String> {
+        self.http.route_labels()
     }
 
     /// Enable or disable following registrar referrals (default: enabled)
@@ -71,28 +105,29 @@ impl RdapClient {
     /// Execute an RDAP request with registrar referral support
     pub async fn query_with_referral(&self, request: &RdapRequest) -> Result<RdapQueryResult> {
         // Try the original query first
-        match self.query_servers(request).await {
+        let err = match self.query_servers(request).await {
             Ok(result) => return Ok(result),
-            Err(ref e) if self.should_retry_with_cidr(request, e) => {
-                // For IPv6 host queries that get 400, retry with CIDR prefixes
-                // Some RDAP servers (e.g., TWNIC) don't support host-level IPv6 queries
-                for prefix_len in &[64u8, 48, 32] {
-                    if let Some(cidr_query) = self.make_cidr_query(request, *prefix_len) {
-                        log::info!(
-                            "Retrying with CIDR prefix /{prefix_len}: {}",
-                            cidr_query.query
-                        );
-                        if let Ok(result) = self.query_servers(&cidr_query).await {
-                            return Ok(result);
-                        }
+            Err(e) => e,
+        };
+
+        if self.should_retry_with_cidr(request, &err) {
+            // For IPv6 host queries that get 400, retry with CIDR prefixes
+            // Some RDAP servers (e.g., TWNIC) don't support host-level IPv6 queries
+            for prefix_len in &[64u8, 48, 32] {
+                if let Some(cidr_query) = self.make_cidr_query(request, *prefix_len) {
+                    log::info!(
+                        "Retrying with CIDR prefix /{prefix_len}: {}",
+                        cidr_query.query
+                    );
+                    if let Ok(result) = self.query_servers(&cidr_query).await {
+                        return Ok(result);
                     }
                 }
             }
-            Err(_) => {}
         }
 
         // All attempts failed, return the original error
-        self.query_servers(request).await
+        Err(err)
     }
 
     /// Check if we should retry an IPv6 query with CIDR notation
@@ -136,7 +171,7 @@ impl RdapClient {
         };
 
         if urls.is_empty() {
-            return Err(RdapError::Bootstrap("No RDAP servers found".to_string()));
+            return Err(RdapError::NoServer(request.query.clone()));
         }
 
         // Try each server
@@ -145,43 +180,71 @@ impl RdapClient {
         for base_url in &urls {
             let url = request.build_url(base_url)?;
 
-            log::debug!("Querying RDAP server: {url}");
+            log::debug!(
+                "Querying RDAP server: {}",
+                crate::net::without_credentials(&url)
+            );
 
-            match self.fetch_rdap(&url).await {
-                Ok(obj) => {
+            match self.fetch_rdap_json(&url).await {
+                Ok((obj, json)) => {
                     // For domain queries (not TLD), try to follow registrar referral
                     if self.follow_referral
                         && request.query_type == QueryType::Domain
                         && let RdapObject::Domain(ref domain) = obj
                         && let Some(registrar_rdap_url) = self.extract_registrar_rdap_url(domain)
                     {
-                        // Skip if referral points to the same server (same host)
-                        if Self::is_same_server(&url, &registrar_rdap_url) {
-                            log::debug!(
-                                "Skipping referral: same server as registry ({})",
-                                registrar_rdap_url.host_str().unwrap_or("unknown")
-                            );
+                        // Skip if referral points to the same server (same host), or
+                        // somewhere a public registry must not send us (SSRF guard)
+                        let same_server = Self::is_same_server(&url, &registrar_rdap_url);
+                        if same_server
+                            || !self.http.referral_allowed(&url, &registrar_rdap_url).await
+                        {
+                            if same_server {
+                                log::debug!(
+                                    "Skipping referral: same server as registry ({})",
+                                    registrar_rdap_url.host_str().unwrap_or("unknown")
+                                );
+                            } else {
+                                log::warn!(
+                                    "Not following registrar referral to internal or downgraded URL {registrar_rdap_url}"
+                                );
+                            }
                             return Ok(RdapQueryResult {
                                 registry: obj,
                                 registry_url: url,
                                 registrar: None,
                                 registrar_url: None,
+                                registry_json: json,
+                                registrar_json: None,
+                                registrar_failed: false,
                             });
                         }
 
                         log::debug!("Following registrar referral: {registrar_rdap_url}");
-                        match self.fetch_rdap(&registrar_rdap_url).await {
-                            Ok(registrar_obj) => {
+                        match self.fetch_rdap_json(&registrar_rdap_url).await {
+                            Ok((registrar_obj, registrar_json)) => {
                                 return Ok(RdapQueryResult {
                                     registry: obj,
                                     registry_url: url,
                                     registrar: Some(registrar_obj),
                                     registrar_url: Some(registrar_rdap_url),
+                                    registry_json: json,
+                                    registrar_json: Some(registrar_json),
+                                    registrar_failed: false,
                                 });
                             }
                             Err(e) => {
                                 log::warn!("Failed to fetch registrar data: {e}");
                                 // Continue with registry-only result
+                                return Ok(RdapQueryResult {
+                                    registry: obj,
+                                    registry_url: url,
+                                    registrar: None,
+                                    registrar_url: None,
+                                    registry_json: json,
+                                    registrar_json: None,
+                                    registrar_failed: true,
+                                });
                             }
                         }
                     }
@@ -190,11 +253,17 @@ impl RdapClient {
                         registry_url: url,
                         registrar: None,
                         registrar_url: None,
+                        registry_json: json,
+                        registrar_json: None,
+                        registrar_failed: false,
                     });
                 }
                 Err(RdapError::NotFound) => return Err(RdapError::NotFound),
                 Err(e) => {
-                    log::warn!("Server {url} failed: {e}");
+                    log::warn!(
+                        "Server {} failed: {e}",
+                        crate::net::without_credentials(&url)
+                    );
                     last_error = Some(e);
                 }
             }
@@ -203,9 +272,9 @@ impl RdapClient {
         Err(last_error.unwrap_or(RdapError::NoWorkingServers))
     }
 
-    /// Check if two URLs point to the same server (same host)
+    /// Check if two URLs point to the same server (same host and port)
     fn is_same_server(url1: &Url, url2: &Url) -> bool {
-        url1.host() == url2.host()
+        url1.host() == url2.host() && url1.port_or_known_default() == url2.port_or_known_default()
     }
 
     /// Extract registrar RDAP URL from domain response
@@ -254,41 +323,59 @@ impl RdapClient {
 
     /// Fetch RDAP response from URL
     pub async fn fetch_rdap(&self, url: &Url) -> Result<RdapObject> {
+        self.fetch_rdap_json(url).await.map(|(obj, _)| obj)
+    }
+
+    /// Fetch RDAP response from URL, returning the parsed object and the raw JSON
+    async fn fetch_rdap_json(&self, url: &Url) -> Result<(RdapObject, serde_json::Value)> {
         let response = self
-            .http_client
-            .get(url.as_str())
-            .header("Accept", "application/rdap+json, application/json")
-            .send()
+            .http
+            .get(url, "application/rdap+json, application/json", self.timeout)
             .await?;
+        let status = response.status;
 
-        let status = response.status();
-
-        if status.is_success() {
-            let text = response.text().await?;
-            let obj = self.parse_response(&text)?;
-            Ok(obj)
-        } else if status.as_u16() == 404 {
+        if (200..300).contains(&status) {
+            self.parse_response(&response.body)
+        } else if status == 404 {
             Err(RdapError::NotFound)
+        } else if let Ok(err_obj) =
+            serde_json::from_slice::<crate::models::ErrorResponse>(&response.body)
+        {
+            // Server sent an RDAP error object. The HTTP status is authoritative
+            // (a 500 whose body claims 404 must not be cached as "not found"),
+            // and the text is untrusted: it ends up in logs and API responses.
+            Err(RdapError::ServerError {
+                code: status,
+                title: err_obj
+                    .title
+                    .as_deref()
+                    .map_or_else(|| "Unknown error".to_string(), sanitize_upstream_text),
+                description: err_obj
+                    .description
+                    .iter()
+                    .take(MAX_ERROR_LINES)
+                    .map(|line| sanitize_upstream_text(line))
+                    .collect(),
+            })
         } else {
-            // Try to parse as error response
-            let text = response.text().await?;
-            if let Ok(err_obj) = serde_json::from_str::<crate::models::ErrorResponse>(&text) {
-                Err(RdapError::ServerError {
-                    code: err_obj.error_code.unwrap_or(status.as_u16()),
-                    title: err_obj.title.unwrap_or_else(|| "Unknown error".to_string()),
-                    description: err_obj.description,
-                })
-            } else {
-                Err(RdapError::Other(format!("HTTP error: {status}")))
-            }
+            Err(RdapError::ServerError {
+                code: status,
+                title: format!("HTTP error {status}"),
+                description: Vec::new(),
+            })
         }
     }
 
-    /// Parse RDAP JSON response
-    fn parse_response(&self, json: &str) -> Result<RdapObject> {
+    /// Parse RDAP JSON response into the typed object, keeping the raw JSON
+    fn parse_response(&self, json: &[u8]) -> Result<(RdapObject, serde_json::Value)> {
         // First, parse as generic JSON to inspect structure
-        let value: serde_json::Value = serde_json::from_str(json)?;
+        let value: serde_json::Value = serde_json::from_slice(json)?;
+        let obj = Self::classify(value.clone())?;
+        Ok((obj, value))
+    }
 
+    /// Turn generic RDAP JSON into the matching `RdapObject` variant
+    fn classify(value: serde_json::Value) -> Result<RdapObject> {
         // Detect object type
         if let Some(obj) = value.as_object() {
             // Check for error

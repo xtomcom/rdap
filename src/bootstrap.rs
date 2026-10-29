@@ -3,12 +3,18 @@
 use crate::config::{self, Config, TldOverrides};
 use crate::error::{RdapError, Result};
 use crate::ip;
-use crate::request::{QueryType, RdapRequest};
+use crate::net::{HttpPool, NetOptions};
+use crate::request::{QueryType, RdapRequest, parse_asn};
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use url::Url;
+
+/// How long a fetched bootstrap registry is reused before refetching
+const REGISTRY_TTL: Duration = Duration::from_hours(24);
 
 /// Bootstrap registry file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,22 +27,56 @@ struct BootstrapRegistry {
 
 /// Bootstrap client for service discovery
 pub struct BootstrapClient {
-    http_client: reqwest::Client,
+    http: Arc<HttpPool>,
     config: Config,
     tld_overrides: TldOverrides,
+    /// In-memory registry cache by URL
+    registries: Mutex<HashMap<String, CachedRegistry>>,
+    /// Serializes registry fetches so concurrent cold misses fetch once
+    fetch_lock: tokio::sync::Mutex<()>,
+}
+
+/// After a failed fetch, don't retry that URL for this long
+const FAILURE_BACKOFF: Duration = Duration::from_secs(30);
+
+/// Record a failed fetch of `url`; returns the stale copy, if any
+fn mark_failed(
+    registries: &mut HashMap<String, CachedRegistry>,
+    url: &str,
+) -> Option<Arc<BootstrapRegistry>> {
+    let entry = registries.entry(url.to_owned()).or_default();
+    entry.failed_at = Some(Instant::now());
+    entry.registry.as_ref().map(|(_, stale)| Arc::clone(stale))
+}
+
+#[derive(Default)]
+struct CachedRegistry {
+    /// Last good copy and when it was fetched (kept past the TTL as a fallback)
+    registry: Option<(Instant, Arc<BootstrapRegistry>)>,
+    /// When the last fetch failed
+    failed_at: Option<Instant>,
 }
 
 impl BootstrapClient {
     /// Create a new bootstrap client
     pub fn new() -> Result<Self> {
+        Ok(Self::with_pool(Arc::new(HttpPool::new(
+            &NetOptions::default(),
+        )?)))
+    }
+
+    /// Create a bootstrap client that sends requests through `http`
+    pub fn with_pool(http: Arc<HttpPool>) -> Self {
         let config = Config::load().unwrap_or_default();
         let tld_overrides = config::load_tld_overrides().unwrap_or_default();
 
-        Ok(Self {
-            http_client: reqwest::Client::new(),
+        Self {
+            http,
             config,
             tld_overrides,
-        })
+            registries: Mutex::new(HashMap::new()),
+            fetch_lock: tokio::sync::Mutex::new(()),
+        }
     }
 
     /// Lookup RDAP servers for a request
@@ -48,7 +88,9 @@ impl BootstrapClient {
                     .map_err(|e| RdapError::Bootstrap(format!("Invalid IANA RDAP URL: {e}")))?;
                 Ok(vec![url])
             }
-            QueryType::Domain => {
+            // A nameserver object lives at the registry of its own name's TLD
+            // (ns1.google.com -> .com), like a domain
+            QueryType::Domain | QueryType::Nameserver => {
                 // Priority: tlds.json first, then bootstrap
                 if let Some(url) = config::lookup_tld_override(&self.tld_overrides, &request.query)
                 {
@@ -73,30 +115,90 @@ impl BootstrapClient {
                 let registry = self.fetch_registry(&self.config.bootstrap.asn).await?;
                 self.match_asn(&registry, &request.query)
             }
-            QueryType::Entity => Err(RdapError::Bootstrap(
-                "Entity queries require explicit server (-s/--server)".to_owned(),
-            )),
-            _ => Err(RdapError::Bootstrap(
-                "This query type requires explicit server (-s/--server)".to_owned(),
-            )),
+            other => Err(RdapError::NeedsServer(other.to_string())),
         }
     }
 
-    /// Fetch bootstrap registry file from URL
-    async fn fetch_registry(&self, url: &str) -> Result<BootstrapRegistry> {
+    /// Fetch bootstrap registry file from URL, reusing a cached copy for
+    /// `REGISTRY_TTL`. Concurrent misses share one fetch; after a failure the
+    /// URL isn't refetched for `FAILURE_BACKOFF`, and a stale copy is used
+    /// instead of failing when there is one.
+    async fn fetch_registry(&self, url: &str) -> Result<Arc<BootstrapRegistry>> {
+        if let Some(answer) = self.cached_registry(url) {
+            return answer;
+        }
+        let _guard = self.fetch_lock.lock().await;
+        // Another task may have fetched (or failed) while we waited
+        if let Some(answer) = self.cached_registry(url) {
+            return answer;
+        }
+
+        match self.download_registry(url).await {
+            Ok(registry) => {
+                self.registries.lock().unwrap().insert(
+                    url.to_owned(),
+                    CachedRegistry {
+                        registry: Some((Instant::now(), Arc::clone(&registry))),
+                        failed_at: None,
+                    },
+                );
+                Ok(registry)
+            }
+            Err(e) => {
+                let stale = mark_failed(&mut self.registries.lock().unwrap(), url);
+                if let Some(stale) = stale {
+                    log::warn!(
+                        "Failed to refresh bootstrap registry {url}, using cached copy: {e}"
+                    );
+                    return Ok(stale);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// A cached answer for `url`: fresh copy, or (within the failure backoff)
+    /// the stale copy / an error. `None` means "fetch it".
+    fn cached_registry(&self, url: &str) -> Option<Result<Arc<BootstrapRegistry>>> {
+        let (registry, failed_at) = self
+            .registries
+            .lock()
+            .unwrap()
+            .get(url)
+            .map(|entry| (entry.registry.clone(), entry.failed_at))?;
+        if let Some((fetched_at, registry)) = &registry
+            && fetched_at.elapsed() < REGISTRY_TTL
+        {
+            return Some(Ok(Arc::clone(registry)));
+        }
+        if failed_at.is_some_and(|t| t.elapsed() < FAILURE_BACKOFF) {
+            return Some(registry.as_ref().map_or_else(
+                || {
+                    Err(RdapError::Bootstrap(format!(
+                        "Bootstrap registry {url} is unavailable (fetch failed recently)"
+                    )))
+                },
+                |(_, stale)| Ok(Arc::clone(stale)),
+            ));
+        }
+        None
+    }
+
+    async fn download_registry(&self, url: &str) -> Result<Arc<BootstrapRegistry>> {
         log::debug!("Fetching bootstrap registry: {url}");
 
-        let response = self.http_client.get(url).send().await?;
+        let parsed = Url::parse(url)
+            .map_err(|e| RdapError::Bootstrap(format!("Invalid bootstrap URL {url}: {e}")))?;
+        let response = self.http.get(&parsed, "application/json", None).await?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        if !(200..300).contains(&response.status) {
             return Err(RdapError::Bootstrap(format!(
-                "Failed to fetch registry: HTTP {status}"
+                "Failed to fetch registry: HTTP {}",
+                response.status
             )));
         }
 
-        let registry: BootstrapRegistry = response.json().await?;
-        Ok(registry)
+        Ok(Arc::new(serde_json::from_slice(&response.body)?))
     }
 
     /// Match domain name
@@ -180,15 +282,8 @@ impl BootstrapClient {
 
     /// Match AS number
     fn match_asn(&self, registry: &BootstrapRegistry, asn_str: &str) -> Result<Vec<Url>> {
-        // Case-insensitive strip of "AS" prefix
-        let asn_str = if asn_str.to_uppercase().starts_with("AS") {
-            &asn_str[2..]
-        } else {
-            asn_str
-        };
-        let asn: u32 = asn_str
-            .parse()
-            .map_err(|_| RdapError::InvalidQuery(format!("Invalid AS number: {asn_str}")))?;
+        let asn = parse_asn(asn_str)
+            .ok_or_else(|| RdapError::InvalidQuery(format!("Invalid AS number: {asn_str}")))?;
 
         for service in &registry.services {
             if service.len() >= 2
