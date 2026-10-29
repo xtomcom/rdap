@@ -192,6 +192,31 @@ async fn upstream_json_passes_through_unchanged() {
 }
 
 #[tokio::test]
+async fn upstream_credentials_are_not_exposed() {
+    let mut upstream = Server::new_async().await;
+    let body = ip_network("192.0.2.0", "192.0.2.255", &[abuse_entity("a@example.net")]);
+    let _mock = mock_json(&mut upstream, "/ip/192.0.2.9", 200, &body).await;
+    let with_creds = upstream.url().replace("http://", "http://svc:UpPass77@");
+    let app = app_with(
+        ServeOptions {
+            upstream: Some(format!("{with_creds}/").parse().unwrap()),
+            ..ServeOptions::default()
+        },
+        Duration::from_secs(5),
+    );
+
+    for uri in ["/query/192.0.2.9", "/abuse/192.0.2.9"] {
+        let reply = get(&app, uri).await;
+        assert_eq!(reply.status, StatusCode::OK);
+        assert!(
+            !reply.body.to_string().contains("UpPass77"),
+            "{uri}: {}",
+            reply.body
+        );
+    }
+}
+
+#[tokio::test]
 async fn shorthand_and_cidr_paths() {
     let mut upstream = Server::new_async().await;
     let cidr = mock_json(

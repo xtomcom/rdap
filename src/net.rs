@@ -227,6 +227,11 @@ struct Route {
 impl Route {
     /// Convert a reqwest error, keeping proxy credentials out of the message
     fn error(&self, e: reqwest::Error) -> RdapError {
+        // reqwest errors carry the request URL; drop any upstream credentials
+        let e = match e.url().map(without_credentials) {
+            Some(url) => e.with_url(url),
+            None => e,
+        };
         if e.is_timeout() {
             return RdapError::Timeout;
         }
@@ -277,6 +282,15 @@ pub struct HttpPool {
     epoch: Instant,
     /// Bound routes mix IPv4 and IPv6 sources: filter routes per destination
     mixed_families: bool,
+}
+
+/// `url` without username/password, for showing to users and in logs
+pub fn without_credentials(url: &Url) -> Url {
+    let mut url = url.clone();
+    // Only fails for URLs that can't have credentials at all
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url
 }
 
 /// Whether a URL points at this host or a private network: `localhost` or an
@@ -482,7 +496,12 @@ impl HttpPool {
             match request.send().await {
                 Ok(response) => {
                     route.cooldown_until.store(0, Ordering::Relaxed);
-                    log::debug!("GET {url} via {}: HTTP {}", route.label, response.status());
+                    log::debug!(
+                        "GET {} via {}: HTTP {}",
+                        without_credentials(url),
+                        route.label,
+                        response.status()
+                    );
                     return self.read_body(response).await.map_err(|e| match e {
                         RdapError::Http(e) => route.error(e),
                         other => other,
@@ -498,7 +517,8 @@ impl HttpPool {
                     };
                     log::log!(
                         level,
-                        "GET {url} via {} failed (attempt {}/{attempts}): {error}",
+                        "GET {} via {} failed (attempt {}/{attempts}): {error}",
+                        without_credentials(url),
                         route.label,
                         attempt + 1
                     );

@@ -155,6 +155,7 @@ pub async fn serve(
         );
     }
     if let Some(upstream) = &opts.upstream {
+        let upstream = crate::net::without_credentials(upstream);
         println!("Sending all queries to {}", upstream.as_str().cyan());
     }
     // Labels are credential-redacted

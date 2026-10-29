@@ -166,7 +166,10 @@ impl RdapClient {
         for base_url in &urls {
             let url = request.build_url(base_url)?;
 
-            log::debug!("Querying RDAP server: {url}");
+            log::debug!(
+                "Querying RDAP server: {}",
+                crate::net::without_credentials(&url)
+            );
 
             match self.fetch_rdap_json(&url).await {
                 Ok((obj, json)) => {
@@ -243,7 +246,10 @@ impl RdapClient {
                 }
                 Err(RdapError::NotFound) => return Err(RdapError::NotFound),
                 Err(e) => {
-                    log::warn!("Server {url} failed: {e}");
+                    log::warn!(
+                        "Server {} failed: {e}",
+                        crate::net::without_credentials(&url)
+                    );
                     last_error = Some(e);
                 }
             }

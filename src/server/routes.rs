@@ -256,8 +256,9 @@ struct QueryView<'a> {
     #[serde(rename = "type")]
     query_type: String,
     source: &'static str,
-    registry_url: &'a Url,
-    registrar_url: Option<&'a Url>,
+    /// Upstream URLs are shown without credentials (e.g. from `-s https://user:pass@...`)
+    registry_url: String,
+    registrar_url: Option<String>,
     #[serde(flatten)]
     objects: Objects<'a>,
 }
@@ -293,8 +294,8 @@ impl<'a> QueryView<'a> {
             query: &request.query,
             query_type: request.query_type.to_string(),
             source,
-            registry_url: &result.registry_url,
-            registrar_url: result.registrar_url.as_ref(),
+            registry_url: public_url(&result.registry_url),
+            registrar_url: result.registrar_url.as_ref().map(public_url),
             objects,
         }
     }
@@ -324,7 +325,12 @@ struct AbuseView<'a> {
     #[serde(rename = "type")]
     query_type: String,
     abuse: Option<String>,
-    source_url: &'a Url,
+    source_url: String,
+}
+
+/// Upstream URL as shown to API clients: without credentials
+fn public_url(url: &Url) -> String {
+    crate::net::without_credentials(url).into()
 }
 
 /// Abuse email in an object's entities
@@ -383,7 +389,7 @@ pub async fn abuse(State(state): Shared, path: RawPath, params: RawParams) -> Re
                 query: &request.query,
                 query_type: request.query_type.to_string(),
                 abuse,
-                source_url,
+                source_url: public_url(source_url),
             },
         ))
     }
