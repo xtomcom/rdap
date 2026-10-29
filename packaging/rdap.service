@@ -16,6 +16,7 @@ Type=simple
 # Settings from the env file override Environment= below. $RDAP_ARGS passes
 # extra flags that have no env var (e.g. --timeout 60 --no-referral).
 Environment=HOME=%S/rdap
+Environment=RDAP_ARGS=
 EnvironmentFile=-/etc/default/rdap
 ExecStart=/usr/bin/rdap --serve $RDAP_ARGS
 Restart=on-failure
