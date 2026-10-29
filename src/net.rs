@@ -279,6 +279,81 @@ pub struct HttpPool {
     mixed_families: bool,
 }
 
+/// Whether a URL points at this host or a private network: `localhost` or an
+/// IP literal that isn't publicly routable
+pub fn is_internal_url(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => !crate::ip::is_public_ip(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => !crate::ip::is_public_ip(IpAddr::V6(ip)),
+        None => true,
+    }
+}
+
+/// SSRF guard for URLs taken from upstream data (referrals, redirects).
+///
+/// A public server may only send us to public `https` (or, if it is itself
+/// plain `http`, `http`) URLs. A server that is itself local or private (a
+/// self-hosted upstream, tests) may point anywhere.
+pub fn may_follow(from: &Url, to: &Url) -> bool {
+    if is_internal_url(from) {
+        return true;
+    }
+    let scheme_ok = match from.scheme() {
+        "https" => to.scheme() == "https",
+        "http" => matches!(to.scheme(), "http" | "https"),
+        _ => false,
+    };
+    scheme_ok && !is_internal_url(to)
+}
+
+/// Maximum redirects followed per request
+const MAX_REDIRECTS: usize = 3;
+
+fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let allowed = attempt.previous().len() <= MAX_REDIRECTS
+            && attempt
+                .previous()
+                .last()
+                .is_some_and(|from| may_follow(from, attempt.url()));
+        if allowed {
+            attempt.follow()
+        } else {
+            log::warn!("Not following redirect to {}", attempt.url());
+            attempt.stop()
+        }
+    })
+}
+
+impl HttpPool {
+    /// SSRF guard for a registrar referral found in `from`'s response: besides
+    /// [`may_follow`], a hostname must not resolve to an internal address.
+    /// Through proxies the name isn't resolved locally (that would leak DNS),
+    /// so only the URL itself is checked.
+    pub async fn referral_allowed(&self, from: &Url, to: &Url) -> bool {
+        if !may_follow(from, to) {
+            return false;
+        }
+        if is_internal_url(from) || self.routes.iter().any(|r| r.is_proxy) {
+            return true;
+        }
+        let (Some(url::Host::Domain(host)), Some(port)) = (to.host(), to.port_or_known_default())
+        else {
+            return true;
+        };
+        tokio::net::lookup_host((host, port))
+            .await
+            .is_ok_and(|addrs| {
+                let addrs: Vec<_> = addrs.collect();
+                !addrs.is_empty() && addrs.iter().all(|a| crate::ip::is_public_ip(a.ip()))
+            })
+    }
+}
+
 impl HttpPool {
     /// Build the pool from options. Fails on invalid proxy URLs, a missing
     /// interface or options not supported on this platform.
@@ -582,6 +657,8 @@ fn base_builder(opts: &NetOptions, interface: Option<&str>) -> Result<reqwest::C
         // a proxy handshake) fails as a connect error and fails over
         .connect_timeout(opts.timeout.mul_f64(0.75).min(MAX_CONNECT_TIMEOUT))
         .user_agent(concat!("rdap-rust/", env!("CARGO_PKG_VERSION")))
+        .redirect(redirect_policy())
+        .referer(false)
         .danger_accept_invalid_certs(opts.insecure);
     match interface {
         Some(interface) => with_interface(builder, interface),
@@ -643,6 +720,38 @@ fn with_interface(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_urls_cannot_point_inward() {
+        let url = |s: &str| Url::parse(s).unwrap();
+        let public = url("https://rdap.verisign.com/com/v1/domain/x.com");
+        for to in [
+            "https://127.0.0.1/admin",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://10.0.0.5/",
+            "https://[::1]/",
+            "https://[fd00:ec2::254]/",
+            "https://localhost:8080/",
+            "https://foo.localhost/",
+            "http://rdap.registrar.example/domain/x.com", // https -> http downgrade
+            "file:///etc/passwd",
+        ] {
+            assert!(!may_follow(&public, &url(to)), "{to}");
+        }
+        assert!(may_follow(
+            &public,
+            &url("https://rdap.registrar.example/domain/x.com")
+        ));
+        assert!(may_follow(
+            &url("http://rdap.example/"),
+            &url("https://rdap.registrar.example/")
+        ));
+        // A local / private upstream (self-hosted, tests) may point anywhere
+        assert!(may_follow(
+            &url("http://127.0.0.1:8080/"),
+            &url("http://10.0.0.1/")
+        ));
+    }
 
     #[test]
     fn test_redact_proxy_url() {

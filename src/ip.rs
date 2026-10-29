@@ -107,6 +107,42 @@ pub fn is_cidr(input: &str) -> bool {
     false
 }
 
+/// Whether `ip` is a publicly routable unicast address.
+///
+/// Rejects loopback, private (RFC 1918 / ULA), link-local (incl. cloud
+/// metadata 169.254.169.254), CGNAT, unspecified, broadcast, multicast,
+/// documentation and reserved ranges.
+pub fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || v4.is_documentation()
+                || a == 0
+                || a >= 240
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19)))
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00 // unique local fc00::/7
+                || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
+                || (first == 0x2001 && v6.segments()[1] == 0x0db8)) // documentation
+        }
+    }
+}
+
 /// Extract the IP part from a CIDR notation, or return as-is if not CIDR
 pub fn extract_ip_from_cidr(input: &str) -> String {
     if let Some((ip_part, _)) = input.split_once('/') {
@@ -119,6 +155,30 @@ pub fn extract_ip_from_cidr(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_public_ip() {
+        for ip in ["1.1.1.1", "8.8.8.8", "2606:4700::1111"] {
+            assert!(is_public_ip(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in [
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "0.0.0.0",
+            "::1",
+            "::",
+            "fd00:ec2::254",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "2001:db8::1",
+        ] {
+            assert!(!is_public_ip(ip.parse().unwrap()), "{ip}");
+        }
+    }
 
     #[test]
     fn test_normalize_standard_ipv4() {

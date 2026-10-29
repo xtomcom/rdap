@@ -176,12 +176,22 @@ impl RdapClient {
                         && let RdapObject::Domain(ref domain) = obj
                         && let Some(registrar_rdap_url) = self.extract_registrar_rdap_url(domain)
                     {
-                        // Skip if referral points to the same server (same host)
-                        if Self::is_same_server(&url, &registrar_rdap_url) {
-                            log::debug!(
-                                "Skipping referral: same server as registry ({})",
-                                registrar_rdap_url.host_str().unwrap_or("unknown")
-                            );
+                        // Skip if referral points to the same server (same host), or
+                        // somewhere a public registry must not send us (SSRF guard)
+                        let same_server = Self::is_same_server(&url, &registrar_rdap_url);
+                        if same_server
+                            || !self.http.referral_allowed(&url, &registrar_rdap_url).await
+                        {
+                            if same_server {
+                                log::debug!(
+                                    "Skipping referral: same server as registry ({})",
+                                    registrar_rdap_url.host_str().unwrap_or("unknown")
+                                );
+                            } else {
+                                log::warn!(
+                                    "Not following registrar referral to internal or downgraded URL {registrar_rdap_url}"
+                                );
+                            }
                             return Ok(RdapQueryResult {
                                 registry: obj,
                                 registry_url: url,
