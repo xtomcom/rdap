@@ -1,4 +1,5 @@
 # Maintainer: xTom <packages@xtom.com>
+# Maintainer: Xiufeng Guo <i@m.ac>
 pkgname=rdap
 pkgver=1.1.0
 pkgrel=1
