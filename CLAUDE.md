@@ -50,7 +50,7 @@ This is an RDAP (Registration Data Access Protocol) client written in Rust, impl
 - **`src/bootstrap.rs`** - `BootstrapClient` - IANA bootstrap service discovery to find authoritative RDAP servers, with TLD override support
 - **`src/config.rs`** - Configuration management with priority loading (local > user > system > builtin)
 - **`src/display.rs`** - `RdapDisplay` and `RdapDisplayWithQuery` traits - colored terminal output formatting, abuse contact display
-- **`src/cache.rs`** - Bootstrap file caching in `~/.cache/rdap/`
+- **`src/cache.rs`** - Disk cache helper (`~/.cache/rdap/`; currently unused — bootstrap registries are cached in memory in `bootstrap.rs`)
 - **`src/ip.rs`** - IP address utilities: normalization (shorthand → standard), CIDR detection/parsing
 - **`src/models/`** - RDAP data models (Domain, Entity, Autnum, IpNetwork, Nameserver, etc.)
 - **`src/net.rs`** - `NetOptions` / `HttpPool` - all outbound HTTP (bootstrap, RDAP, referrals): proxies, `--bind` / `--interface`, round-robin route rotation with failover, per-host concurrency limit, body size limit
@@ -58,7 +58,7 @@ This is an RDAP (Registration Data Access Protocol) client written in Rust, impl
 
 ### Packaging
 
-- **`Dockerfile`** - multi-stage build (`rust:<ver>-slim-<codename>` → `debian:<codename>-slim`, same codename for matching glibc); runs `rdap --serve --listen 0.0.0.0` as UID 10001 with `HOME=/home/rdap`
+- **`Dockerfile`** - multi-stage build (`rust:<ver>-slim-<codename>` → `debian:<codename>-slim`, same codename for matching glibc); runs `rdap --serve` with `RDAP_LISTEN=0.0.0.0` as UID 10001 with `HOME=/home/rdap`
 - **`compose.yaml`** - reference Compose setup (127.0.0.1:8888, read-only root fs, `$HOME` volume)
 - **`packaging/rdap.service`** - hardened systemd unit (`DynamicUser`, `HOME=/var/lib/rdap` via `StateDirectory`), installed by deb and rpm but never enabled/started on install
 - **`packaging/rdap.env`** - installed as `/etc/default/rdap` (conffile / `%config(noreplace)`, mode 600), commented `RDAP_*` defaults; keep in sync with the env vars in `src/main.rs`

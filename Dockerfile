@@ -54,11 +54,13 @@ RUN groupadd --system --gid 10001 rdap \
 COPY --from=build /out/rdap /usr/local/bin/rdap
 
 USER 10001:10001
-ENV HOME=/home/rdap
+# Inside the container the server must listen on all interfaces; publish the
+# port on 127.0.0.1 only (see compose.yaml) unless RDAP_API_TOKEN is set.
+# Set via env (not CMD) so RDAP_LISTEN / RDAP_PORT can still be overridden.
+ENV HOME=/home/rdap \
+    RDAP_LISTEN=0.0.0.0
 WORKDIR /home/rdap
 
 EXPOSE 8888
 ENTRYPOINT ["rdap"]
-# Inside the container the server must listen on all interfaces; publish the
-# port on 127.0.0.1 only (see compose.yaml) unless RDAP_API_TOKEN is set.
-CMD ["--serve", "--listen", "0.0.0.0"]
+CMD ["--serve"]

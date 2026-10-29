@@ -32,7 +32,7 @@ Forked from [Akaere-NetWorks/rdap](https://github.com/Akaere-NetWorks/rdap), add
 - Multi-layer RDAP queries (registry + registrar for domains)
 - Custom TLD overrides for ccTLDs not in IANA bootstrap
 - Abuse contact display for IP/ASN queries
-- Disk caching of bootstrap files
+- In-memory caching of IANA bootstrap files (24h)
 - Configurable timeouts
 
 🌐 **API Server & Networking**
