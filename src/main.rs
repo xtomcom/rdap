@@ -289,7 +289,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle --update flag first
     if cli.update {
-        return run_update().await;
+        return run_update(&cli).await;
     }
 
     if cli.serve.enabled {
@@ -434,7 +434,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_update() -> Result<(), Box<dyn std::error::Error>> {
+async fn run_update(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     use colored::Colorize;
     use rdap::config;
 
@@ -442,7 +442,8 @@ async fn run_update() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Source: {}", "https://github.com/xtomcom/rdap".cyan());
     println!();
 
-    let result = config::update_configs().await?;
+    let http = rdap::net::HttpPool::new(&net_options(cli))?;
+    let result = config::update_configs_with(&http).await?;
 
     // Report config.json status
     if result.config_updated {
