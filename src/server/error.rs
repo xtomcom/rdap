@@ -111,6 +111,10 @@ impl ApiError {
                 Self::bad_gateway(format!("Unparsable upstream RDAP response: {e}"))
             }
             RdapError::NoWorkingServers => Self::bad_gateway("No working RDAP servers found"),
+            // Details (proxy host, source address) are logged, not shown to clients
+            RdapError::Proxy(_) => Self::bad_gateway(
+                "Could not reach the upstream RDAP server through the configured proxy",
+            ),
             other => Self::bad_gateway(other.to_string()),
         }
     }

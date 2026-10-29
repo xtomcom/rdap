@@ -35,6 +35,20 @@ pub struct RdapQueryResult {
     pub registrar_failed: bool,
 }
 
+/// Upstream error descriptions kept per error
+const MAX_ERROR_LINES: usize = 10;
+/// Characters kept per upstream error line
+const MAX_ERROR_LINE_CHARS: usize = 300;
+
+/// Make upstream error text safe to log and show: no control characters
+/// (forged log lines), bounded length
+fn sanitize_upstream_text(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_ERROR_LINE_CHARS)
+        .collect()
+}
+
 /// RDAP client
 pub struct RdapClient {
     http: Arc<HttpPool>,
@@ -327,11 +341,21 @@ impl RdapClient {
         } else if let Ok(err_obj) =
             serde_json::from_slice::<crate::models::ErrorResponse>(&response.body)
         {
-            // Server sent an RDAP error object
+            // Server sent an RDAP error object. The HTTP status is authoritative
+            // (a 500 whose body claims 404 must not be cached as "not found"),
+            // and the text is untrusted: it ends up in logs and API responses.
             Err(RdapError::ServerError {
-                code: err_obj.error_code.unwrap_or(status),
-                title: err_obj.title.unwrap_or_else(|| "Unknown error".to_string()),
-                description: err_obj.description,
+                code: status,
+                title: err_obj
+                    .title
+                    .as_deref()
+                    .map_or_else(|| "Unknown error".to_string(), sanitize_upstream_text),
+                description: err_obj
+                    .description
+                    .iter()
+                    .take(MAX_ERROR_LINES)
+                    .map(|line| sanitize_upstream_text(line))
+                    .collect(),
             })
         } else {
             Err(RdapError::ServerError {

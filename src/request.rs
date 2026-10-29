@@ -124,6 +124,10 @@ impl RdapRequest {
             Some(qt) => qt,
             None => Self::detect_type_with_tld_check(query, is_tld)?,
         };
+        // `.` / `..` would become dot segments in the upstream URL path
+        if query_type != QueryType::Help && query.bytes().all(|b| b == b'.') {
+            return Err(RdapError::InvalidQuery(format!("Invalid query: {query}")));
+        }
 
         let query = match query_type {
             QueryType::Ip
@@ -140,6 +144,13 @@ impl RdapRequest {
 
     /// Build the full RDAP URL
     pub fn build_url(&self, base_url: &Url) -> Result<Url> {
+        // `urlencoding` leaves `.` alone, and `Url::join` resolves dot segments
+        if self.query_type != QueryType::Help && self.query.bytes().all(|b| b == b'.') {
+            return Err(RdapError::InvalidQuery(format!(
+                "Invalid query: {:?}",
+                self.query
+            )));
+        }
         let encoded_query = urlencoding::encode(&self.query);
         let path = match self.query_type {
             QueryType::Domain | QueryType::Tld => {
@@ -313,6 +324,9 @@ mod tests {
             (QueryType::Ip, "../../dead/beef"),
             (QueryType::Autnum, "../../admin?x=1"),
             (QueryType::Autnum, "+5"),
+            (QueryType::Domain, ".."),
+            (QueryType::Entity, "."),
+            (QueryType::Nameserver, "..."),
         ] {
             assert!(RdapRequest::new(qt, q).build_url(&base).is_err(), "{q:?}");
         }
