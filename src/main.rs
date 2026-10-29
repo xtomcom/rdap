@@ -108,7 +108,7 @@ struct ServeArgs {
     cache_size: u64,
 
     /// Send permissive CORS headers (for browser clients)
-    #[arg(long, env = "RDAP_CORS")]
+    #[arg(long, env = "RDAP_CORS", value_parser = clap::builder::BoolishValueParser::new())]
     cors: bool,
 
     /// Maximum queries per /batch request
@@ -170,8 +170,7 @@ enum JsonSource {
     Registrar,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     // Rust ignores SIGPIPE by default, so `rdap ... | head` panics on a closed
     // stdout. Restore the default handler to exit quietly instead.
     #[cfg(unix)]
@@ -179,13 +178,57 @@ async fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
 
+    // Before the tokio runtime starts any threads (env mutation isn't thread-safe)
+    normalize_env();
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let cli = Cli::parse();
 
-    if let Err(e) = run(cli).await {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to start the tokio runtime");
+    if let Err(e) = runtime.block_on(run(cli)) {
         eprintln!("{} {}", "Error:".bright_red().bold(), e);
         process::exit(1);
+    }
+}
+
+/// Treat empty `RDAP_*` env vars as unset and drop empty items from comma
+/// lists, so `RDAP_BIND=` / `RDAP_PROXY: ""` / `a,b,` don't abort startup
+fn normalize_env() {
+    for (key, value) in std::env::vars_os() {
+        let Some(key) = key.to_str().filter(|k| k.starts_with("RDAP_")) else {
+            continue;
+        };
+        let Some(value) = value.to_str() else {
+            continue;
+        };
+        let cleaned = if matches!(key, "RDAP_BIND" | "RDAP_PROXY") {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+                .join(",")
+        } else {
+            value.trim().to_owned()
+        };
+        if cleaned.is_empty() && key == "RDAP_API_TOKEN" {
+            eprintln!(
+                "{} RDAP_API_TOKEN is set but empty: authentication is disabled",
+                "Warning:".bright_yellow().bold()
+            );
+        }
+        // SAFETY: called at the start of main, before any other thread exists
+        unsafe {
+            if cleaned.is_empty() {
+                std::env::remove_var(key);
+            } else if cleaned != value {
+                std::env::set_var(key, cleaned);
+            }
+        }
     }
 }
 
