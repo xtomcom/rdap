@@ -174,11 +174,142 @@ pub async fn serve(
     );
 
     let app = router(Arc::new(AppState::new(opts, client)));
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    serve_connections(listener, app, shutdown_signal()).await;
     println!("Server stopped");
     Ok(())
+}
+
+/// Clients must send complete request headers within this time, also for the
+/// next request on a keep-alive connection (slowloris / idle connections)
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// Open client connections at once (further clients wait in the accept
+/// queue), lowered to half the open-file limit so outbound requests keep fds
+const MAX_CONNECTIONS: usize = 1024;
+/// Open connections per client IP, so one client can't take every slot
+const MAX_CONNECTIONS_PER_IP: usize = 64;
+
+fn max_connections() -> usize {
+    #[cfg(unix)]
+    {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: getrlimit only writes to the struct we pass
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } == 0 {
+            let half = usize::try_from(limit.rlim_cur / 2).unwrap_or(usize::MAX);
+            return half.clamp(16, MAX_CONNECTIONS);
+        }
+    }
+    MAX_CONNECTIONS
+}
+
+/// Open connections per client IP; a slot is released when its guard drops
+#[derive(Clone, Default)]
+struct PeerSlots(Arc<std::sync::Mutex<std::collections::HashMap<IpAddr, usize>>>);
+
+struct PeerSlot {
+    slots: PeerSlots,
+    ip: IpAddr,
+}
+
+impl PeerSlots {
+    fn try_acquire(&self, ip: IpAddr) -> Option<PeerSlot> {
+        let mut counts = self.0.lock().unwrap();
+        let count = counts.entry(ip).or_insert(0);
+        if *count >= MAX_CONNECTIONS_PER_IP {
+            return None;
+        }
+        *count += 1;
+        drop(counts);
+        Some(PeerSlot {
+            slots: self.clone(),
+            ip,
+        })
+    }
+}
+
+impl Drop for PeerSlot {
+    fn drop(&mut self) {
+        let mut counts = self.slots.0.lock().unwrap();
+        if let Some(count) = counts.get_mut(&self.ip) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.ip);
+            }
+        }
+    }
+}
+/// How long shutdown waits for in-flight requests
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+
+/// Accept loop with header-read timeout, connection cap and graceful
+/// shutdown (`axum::serve` has neither of the first two)
+async fn serve_connections(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()>,
+) {
+    use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+    use hyper_util::server::conn::auto::Builder;
+    use hyper_util::server::graceful::GracefulShutdown;
+    use hyper_util::service::TowerToHyperService;
+
+    // HTTP/1 only: protocol auto-detection reads the first bytes without any
+    // timeout, so a silent client could hold a connection forever
+    let mut builder = Builder::new(TokioExecutor::new()).http1_only();
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT);
+
+    let graceful = GracefulShutdown::new();
+    let slots = Arc::new(Semaphore::new(max_connections()));
+    let peers = PeerSlots::default();
+    let mut shutdown = std::pin::pin!(shutdown);
+
+    loop {
+        let permit = tokio::select! {
+            permit = Arc::clone(&slots).acquire_owned() => permit.expect("semaphore never closed"),
+            () = &mut shutdown => break,
+        };
+        let (stream, peer) = tokio::select! {
+            accepted = listener.accept() => match accepted {
+                Ok(accepted) => accepted,
+                Err(e) => {
+                    // e.g. EMFILE: back off instead of spinning
+                    log::warn!("Failed to accept connection: {e}");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            },
+            () = &mut shutdown => break,
+        };
+        let Some(peer_slot) = peers.try_acquire(peer.ip()) else {
+            log::debug!("Too many connections from {}; closing", peer.ip());
+            continue;
+        };
+
+        let service = TowerToHyperService::new(app.clone());
+        let connection = builder
+            .serve_connection(TokioIo::new(stream), service)
+            .into_owned();
+        let connection = graceful.watch(connection);
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                log::debug!("Connection from {peer} ended: {e}");
+            }
+            drop((permit, peer_slot));
+        });
+    }
+
+    drop(listener);
+    tokio::select! {
+        () = graceful.shutdown() => {}
+        () = tokio::time::sleep(SHUTDOWN_GRACE) => {
+            log::warn!("Shutdown grace period elapsed; dropping open connections");
+        }
+    }
 }
 
 /// Resolve on SIGINT (Ctrl-C) or SIGTERM

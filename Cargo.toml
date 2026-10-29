@@ -66,11 +66,12 @@ axum = { version = "0.8", optional = true }
 tower-http = { version = "0.7", features = ["compression-gzip", "compression-br", "cors", "trace", "timeout", "limit", "set-header"], optional = true }
 moka = { version = "0.12", features = ["future"], optional = true }
 subtle = { version = "2.6", optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio", "http1", "http2"], optional = true }
 
 [features]
 default = ["server"]
 # Local HTTP API server; disable with `default-features = false` when using rdap as a library
-server = ["dep:axum", "dep:tower-http", "dep:moka", "dep:subtle"]
+server = ["dep:axum", "dep:tower-http", "dep:moka", "dep:subtle", "dep:hyper-util"]
 
 [target.'cfg(unix)'.dependencies]
 # Restore default SIGPIPE handling

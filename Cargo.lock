@@ -1579,6 +1579,7 @@ dependencies = [
  "comfy-table",
  "env_logger",
  "http-body-util",
+ "hyper-util",
  "ipnet",
  "libc",
  "log",
