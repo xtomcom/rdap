@@ -23,6 +23,12 @@ pub struct RdapQueryResult {
     pub registrar: Option<RdapObject>,
     /// URL of the registrar RDAP server used (if any)
     pub registrar_url: Option<Url>,
+    /// Registry response exactly as received, including fields the models don't cover
+    #[serde(skip)]
+    pub registry_json: serde_json::Value,
+    /// Registrar response exactly as received
+    #[serde(skip)]
+    pub registrar_json: Option<serde_json::Value>,
 }
 
 /// RDAP client
@@ -147,7 +153,7 @@ impl RdapClient {
         };
 
         if urls.is_empty() {
-            return Err(RdapError::Bootstrap("No RDAP servers found".to_string()));
+            return Err(RdapError::NoServer(request.query.clone()));
         }
 
         // Try each server
@@ -158,8 +164,8 @@ impl RdapClient {
 
             log::debug!("Querying RDAP server: {url}");
 
-            match self.fetch_rdap(&url).await {
-                Ok(obj) => {
+            match self.fetch_rdap_json(&url).await {
+                Ok((obj, json)) => {
                     // For domain queries (not TLD), try to follow registrar referral
                     if self.follow_referral
                         && request.query_type == QueryType::Domain
@@ -177,17 +183,21 @@ impl RdapClient {
                                 registry_url: url,
                                 registrar: None,
                                 registrar_url: None,
+                                registry_json: json,
+                                registrar_json: None,
                             });
                         }
 
                         log::debug!("Following registrar referral: {registrar_rdap_url}");
-                        match self.fetch_rdap(&registrar_rdap_url).await {
-                            Ok(registrar_obj) => {
+                        match self.fetch_rdap_json(&registrar_rdap_url).await {
+                            Ok((registrar_obj, registrar_json)) => {
                                 return Ok(RdapQueryResult {
                                     registry: obj,
                                     registry_url: url,
                                     registrar: Some(registrar_obj),
                                     registrar_url: Some(registrar_rdap_url),
+                                    registry_json: json,
+                                    registrar_json: Some(registrar_json),
                                 });
                             }
                             Err(e) => {
@@ -201,6 +211,8 @@ impl RdapClient {
                         registry_url: url,
                         registrar: None,
                         registrar_url: None,
+                        registry_json: json,
+                        registrar_json: None,
                     });
                 }
                 Err(RdapError::NotFound) => return Err(RdapError::NotFound),
@@ -214,9 +226,9 @@ impl RdapClient {
         Err(last_error.unwrap_or(RdapError::NoWorkingServers))
     }
 
-    /// Check if two URLs point to the same server (same host)
+    /// Check if two URLs point to the same server (same host and port)
     fn is_same_server(url1: &Url, url2: &Url) -> bool {
-        url1.host() == url2.host()
+        url1.host() == url2.host() && url1.port_or_known_default() == url2.port_or_known_default()
     }
 
     /// Extract registrar RDAP URL from domain response
@@ -265,6 +277,11 @@ impl RdapClient {
 
     /// Fetch RDAP response from URL
     pub async fn fetch_rdap(&self, url: &Url) -> Result<RdapObject> {
+        self.fetch_rdap_json(url).await.map(|(obj, _)| obj)
+    }
+
+    /// Fetch RDAP response from URL, returning the parsed object and the raw JSON
+    async fn fetch_rdap_json(&self, url: &Url) -> Result<(RdapObject, serde_json::Value)> {
         let response = self
             .http
             .get(url, "application/rdap+json, application/json", self.timeout)
@@ -293,11 +310,16 @@ impl RdapClient {
         }
     }
 
-    /// Parse RDAP JSON response
-    fn parse_response(&self, json: &[u8]) -> Result<RdapObject> {
+    /// Parse RDAP JSON response into the typed object, keeping the raw JSON
+    fn parse_response(&self, json: &[u8]) -> Result<(RdapObject, serde_json::Value)> {
         // First, parse as generic JSON to inspect structure
         let value: serde_json::Value = serde_json::from_slice(json)?;
+        let obj = Self::classify(value.clone())?;
+        Ok((obj, value))
+    }
 
+    /// Turn generic RDAP JSON into the matching `RdapObject` variant
+    fn classify(value: serde_json::Value) -> Result<RdapObject> {
         // Detect object type
         if let Some(obj) = value.as_object() {
             // Check for error

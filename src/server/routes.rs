@@ -13,6 +13,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
@@ -82,11 +83,11 @@ fn into_response(result: Result<Response, ApiError>) -> Response {
     result.unwrap_or_else(IntoResponse::into_response)
 }
 
-/// The object to return for a single-object view of a result
-const fn pick(result: &RdapQueryResult, source: Source) -> (&'static str, &RdapObject) {
-    match (source, &result.registrar) {
+/// The upstream JSON to return for a single-object view of a result
+const fn pick(result: &RdapQueryResult, source: Source) -> (&'static str, &Value) {
+    match (source, &result.registrar_json) {
         (Source::Registrar | Source::Both, Some(registrar)) => ("registrar", registrar),
-        _ => ("registry", &result.registry),
+        _ => ("registry", &result.registry_json),
     }
 }
 
@@ -178,7 +179,11 @@ async fn rdap_search(
             })?;
         let request = state.build_request(raw, Some(query_type))?;
         let result = state.lookup(request).await?;
-        Ok(json_response(StatusCode::OK, RDAP_JSON, &result.registry))
+        Ok(json_response(
+            StatusCode::OK,
+            RDAP_JSON,
+            &result.registry_json,
+        ))
     }
     .await;
     into_response(result.map_err(ApiError::rdap))
@@ -262,11 +267,11 @@ struct QueryView<'a> {
 #[serde(untagged)]
 enum Objects<'a> {
     One {
-        result: &'a RdapObject,
+        result: &'a Value,
     },
     Both {
-        registry: &'a RdapObject,
-        registrar: Option<&'a RdapObject>,
+        registry: &'a Value,
+        registrar: Option<&'a Value>,
     },
 }
 
@@ -276,8 +281,8 @@ impl<'a> QueryView<'a> {
             (
                 "both",
                 Objects::Both {
-                    registry: &result.registry,
-                    registrar: result.registrar.as_ref(),
+                    registry: &result.registry_json,
+                    registrar: result.registrar_json.as_ref(),
                 },
             )
         } else {

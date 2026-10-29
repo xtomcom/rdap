@@ -167,6 +167,31 @@ async fn ip_lookup_and_cache_hit() {
 }
 
 #[tokio::test]
+async fn upstream_json_passes_through_unchanged() {
+    // Fields the models don't know (RFC 9537 redaction, vendor extensions,
+    // nested unknowns) must survive the proxy
+    let mut upstream = Server::new_async().await;
+    let mut body: Value = serde_json::from_str(&ip_network(
+        "192.0.2.0",
+        "192.0.2.255",
+        &[abuse_entity("abuse@example.net")],
+    ))
+    .unwrap();
+    body["redacted"] = json!([{"name": {"type": "Registrant Name"}, "method": "removal"}]);
+    body["vendor_extension"] = json!({"x": 1});
+    body["entities"][0]["vendorEntityField"] = json!("kept");
+    let _mock = mock_json(&mut upstream, "/ip/192.0.2.1", 200, &body.to_string()).await;
+    let app = app(&upstream);
+
+    let reply = get(&app, "/ip/192.0.2.1").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.body, body);
+
+    let reply = get(&app, "/query/192.0.2.1").await;
+    assert_eq!(reply.body["result"], body);
+}
+
+#[tokio::test]
 async fn shorthand_and_cidr_paths() {
     let mut upstream = Server::new_async().await;
     let cidr = mock_json(

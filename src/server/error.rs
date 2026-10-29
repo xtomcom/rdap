@@ -89,10 +89,8 @@ impl ApiError {
         match err {
             RdapError::InvalidQuery(msg) => Self::bad_request(msg.clone()),
             RdapError::NotFound => Self::not_found(format!("No RDAP record for {query}")),
-            RdapError::Bootstrap(msg) if msg.contains("No RDAP servers found") => {
-                Self::not_found(format!("No RDAP server known for {query}"))
-            }
-            RdapError::Bootstrap(msg) if msg.contains("explicit server") => Self::needs_upstream(),
+            RdapError::NoServer(_) => Self::not_found(format!("No RDAP server known for {query}")),
+            RdapError::NeedsServer(_) => Self::needs_upstream(),
             RdapError::ServerError {
                 code,
                 title,
@@ -197,16 +195,8 @@ mod tests {
         assert_eq!(status_of(&RdapError::InvalidQuery("x".into())), 400);
         assert_eq!(status_of(&RdapError::NotFound), 404);
         // Bootstrap had no server for this TLD / IP / ASN
-        assert_eq!(
-            status_of(&RdapError::Bootstrap("No RDAP servers found".into())),
-            404
-        );
-        assert_eq!(
-            status_of(&RdapError::Bootstrap(
-                "Entity queries require explicit server (-s/--server)".into()
-            )),
-            501
-        );
+        assert_eq!(status_of(&RdapError::NoServer("x.example".into())), 404);
+        assert_eq!(status_of(&RdapError::NeedsServer("entity".into())), 501);
         assert_eq!(
             status_of(&RdapError::Bootstrap(
                 "Failed to fetch registry: HTTP 500".into()

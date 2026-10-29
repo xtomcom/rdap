@@ -89,12 +89,7 @@ impl BootstrapClient {
                 let registry = self.fetch_registry(&self.config.bootstrap.asn).await?;
                 self.match_asn(&registry, &request.query)
             }
-            QueryType::Entity => Err(RdapError::Bootstrap(
-                "Entity queries require explicit server (-s/--server)".to_owned(),
-            )),
-            _ => Err(RdapError::Bootstrap(
-                "This query type requires explicit server (-s/--server)".to_owned(),
-            )),
+            other => Err(RdapError::NeedsServer(other.to_string())),
         }
     }
 

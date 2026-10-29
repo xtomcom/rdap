@@ -450,7 +450,19 @@ impl HttpPool {
 
         let capacity = expected.map_or(0, |len| usize::try_from(len).unwrap_or(0).min(1 << 20));
         let mut body = Vec::with_capacity(capacity);
-        while let Some(chunk) = response.chunk().await? {
+        loop {
+            let chunk = match response.chunk().await {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                // Error bodies are best-effort: some servers (e.g. Verisign's 404s)
+                // close TLS without close_notify, which must not hide the status
+                Err(e) if !(200..300).contains(&status) => {
+                    log::debug!("Ignoring body read error on HTTP {status}: {e}");
+                    break;
+                }
+                Err(e) if e.is_timeout() => return Err(RdapError::Timeout),
+                Err(e) => return Err(e.into()),
+            };
             if limit > 0 && body.len() + chunk.len() > limit {
                 return Err(too_large());
             }

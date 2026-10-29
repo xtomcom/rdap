@@ -157,6 +157,8 @@ pub async fn serve(
     if let Some(upstream) = &opts.upstream {
         println!("Sending all queries to {}", upstream.as_str().cyan());
     }
+    // Labels are credential-redacted
+    println!("Outbound routes: {}", client.route_labels().join(", "));
     println!(
         "rdap API server listening on {}",
         format!("http://{local}").bright_green()

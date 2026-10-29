@@ -18,6 +18,14 @@ pub enum RdapError {
     #[error("Bootstrap error: {0}")]
     Bootstrap(String),
 
+    /// Bootstrap knows no RDAP server for this query (e.g. a TLD without RDAP)
+    #[error("No RDAP server known for {0}")]
+    NoServer(String),
+
+    /// This query type can't be bootstrapped and needs an explicit server
+    #[error("{0} queries require an explicit server (-s/--server)")]
+    NeedsServer(String),
+
     #[error("Invalid query: {0}")]
     InvalidQuery(String),
 
