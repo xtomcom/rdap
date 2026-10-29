@@ -28,6 +28,12 @@ StateDirectory=rdap
 StateDirectoryMode=0750
 UMask=0077
 LimitNOFILE=65536
+# Upper bounds; the result cache is sized by RDAP_CACHE_SIZE (default 256 MiB)
+MemoryMax=1G
+TasksMax=512
+# Defense in depth against SSRF: never reach link-local / cloud metadata
+# (169.254.169.254, fd00:ec2::254), even if a bug let an upstream steer requests
+IPAddressDeny=169.254.0.0/16 fe80::/10 fd00:ec2::254/128
 
 # Sandboxing
 NoNewPrivileges=yes

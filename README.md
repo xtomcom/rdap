@@ -547,6 +547,7 @@ Every option can also be set with an environment variable. A command-line flag w
 | `--port <PORT>` | `RDAP_PORT` | `8888` | Port to listen on |
 | `--token <TOKEN>` | `RDAP_API_TOKEN` | none | Require `Authorization: Bearer <TOKEN>` |
 | `--cache-ttl <SECS>` | `RDAP_CACHE_TTL` | `300` | Seconds to cache results, `0` disables the cache |
+| `--cache-size <MiB>` | `RDAP_CACHE_SIZE` | `256` | Approximate memory budget of the result cache |
 | `--cors` | `RDAP_CORS` | off | Send permissive CORS headers (for browser clients) |
 | `--max-batch <N>` | `RDAP_MAX_BATCH` | `100` | Maximum queries per `POST /batch` request |
 
@@ -602,7 +603,7 @@ Any RDAP client can point at the server, including this one:
 rdap -s http://127.0.0.1:8888/ example.com
 ```
 
-`/entity/{handle}` and RDAP searches have no bootstrap registry, so they need a fixed upstream (`rdap -s <url> --serve`); without one they return `501`.
+Nameservers are looked up at the registry of their own name's TLD (`ns1.google.com` → `.com`). `/entity/{handle}` and RDAP searches have no bootstrap registry, so they need a fixed upstream (`rdap -s <url> --serve`); without one they return `501`.
 
 #### `GET /query/{q}`
 
@@ -712,6 +713,7 @@ Errors use the RDAP error object (RFC 7480 section 5.3) with a matching HTTP sta
 |--------|---------|
 | `400` | Invalid query, `type`, `source` or batch body |
 | `401` | Missing or wrong token (with `WWW-Authenticate: Bearer`) |
+| `403` | No token configured and a non-loopback `Host` header (DNS rebinding protection) |
 | `404` | Object not found, no RDAP server known for it, or unknown path |
 | `405` | Wrong HTTP method |
 | `413` | Batch has too many queries, or the body is too large |
@@ -730,7 +732,9 @@ RDAP_API_TOKEN=secret rdap --serve
 curl -H 'Authorization: Bearer secret' http://127.0.0.1:8888/query/example.com
 ```
 
-Prefer `RDAP_API_TOKEN` over `--token`: command-line arguments are visible to other users in `ps`.
+Prefer `RDAP_API_TOKEN` over `--token`: command-line arguments are visible to other users in `ps`. Surrounding whitespace is ignored; an empty token disables authentication (with a warning).
+
+Without a token on a loopback address, only requests whose `Host` is `localhost` or a loopback IP are accepted (`403` otherwise), so web pages can't reach the API through DNS rebinding.
 
 ### Caching
 
@@ -741,8 +745,11 @@ Results are cached in memory for `--cache-ttl` seconds (default 300, `0` turns i
 - The server listens on `127.0.0.1` by default, so only local clients can reach it.
 - Listening on any other address without a token prints a warning on startup, but the server still starts. **Do not expose it to a network without `RDAP_API_TOKEN`**: anyone who can reach it can send queries from your IP addresses and proxies, which can get them rate-limited or blocked by RDAP servers.
 - The server speaks plain HTTP. To reach it over an untrusted network, put it behind a TLS reverse proxy.
-- CORS headers are only sent with `--cors`.
-- Proxy credentials are never logged.
+- CORS headers are only sent with `--cors` (any origin; `Authorization` and `Content-Type` allowed).
+- Proxy and upstream URL credentials are never logged or returned.
+- Registrar referrals and redirects found in upstream answers are only followed to public `https` URLs (no loopback, private, link-local or cloud-metadata addresses, no `https` → `http` downgrade), at most 3 redirects. A self-hosted upstream on a local or private address (`-s http://10.0.0.5/`) is not restricted.
+- Clients must send request headers within 10 seconds (also between keep-alive requests). At most 1024 connections are served at once, 64 per client IP. Upstream responses are capped at 4 MiB, `/batch` bodies at 64 KiB and 100 queries; all batches together run at most 32 upstream lookups at a time, and a batch is cancelled when its client disconnects.
+- There is no per-client rate limit: for an exposed server, put a reverse proxy with rate limiting in front.
 
 ## Network Options
 
@@ -766,7 +773,8 @@ rdap --serve --bind 203.0.113.10,203.0.113.11
 
 # Use a proxy, or rotate between several
 rdap --proxy socks5h://127.0.0.1:1080 example.com
-rdap --serve --proxy socks5h://user:pass@10.0.0.1:1080,socks5h://10.0.0.2:1080
+# Credentials: use the env var, arguments are visible in `ps`
+RDAP_PROXY=socks5h://user:pass@10.0.0.1:1080,socks5h://10.0.0.2:1080 rdap --serve
 
 # Be gentle with upstream servers
 rdap --serve --max-per-host 4
@@ -774,8 +782,9 @@ rdap --serve --max-per-host 4
 
 - **Proxies**: `socks5://`, `socks5h://` (DNS resolved by the proxy), `http://` and `https://`, with optional `user:pass@` credentials.
 - **Rotation**: each request uses the next route, round-robin. With `--proxy`, routes are the proxies; otherwise they are the `--bind` addresses. `--interface` applies to every route.
-- **Failover**: if a route can't connect (connect error or connect timeout, proxy error), the request is retried on the next route, up to 3 attempts. Requests that got an HTTP response, or timed out waiting for one (a slow server), are never retried.
-- `--bind` and `--proxy` accept repeated flags or comma-separated lists.
+- **Failover**: if a route can't connect (connect error or connect timeout, proxy error), the request is retried on the next route, up to 3 attempts (or the number of routes, if fewer). Requests that got an HTTP response, or timed out waiting for one (a slow server), are never retried.
+- `--bind` and `--proxy` accept repeated flags or comma-separated lists. Empty `RDAP_*` variables count as unset.
+- `rdap --update` downloads through the same routes.
 - `--interface` uses `SO_BINDTODEVICE` on Linux and may need `CAP_NET_RAW`. If an option is not supported on your OS, or a proxy URL is invalid, rdap exits with an error at startup.
 
 ## Docker / Compose

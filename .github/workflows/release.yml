@@ -10,6 +10,10 @@ on:
         description: 'Version tag (e.g., v0.2.0)'
         required: true
 
+# Jobs only get write access where they need it (see the release job)
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   APP_NAME: rdap
