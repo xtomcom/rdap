@@ -1,36 +1,19 @@
-# rdap API server for local use.
-#
-#   docker compose up -d --build
-#   curl http://127.0.0.1:8888/query/1.1.1.1
-#
-# The port is published on 127.0.0.1 only. Before publishing it on other
-# addresses, set RDAP_API_TOKEN.
-
+# rdap API server: cp .env.example .env && docker compose up -d
 services:
   rdap:
-    build: .
-    # Tag for the locally built image; to run an image from a registry
-    # instead, drop `build:` and point this at it.
-    image: rdap:local
+    image: ghcr.io/xtomcom/rdap:latest
+    # build: .                      # build locally instead
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8888:8888"
-    # environment:
-    #   RDAP_API_TOKEN: change-me            # require Authorization: Bearer change-me
-    #   RDAP_CACHE_TTL: "300"                # seconds, 0 disables the result cache
-    #   RDAP_CACHE_SIZE: "256"               # MiB, approximate result cache memory
-    #   RDAP_MAX_PER_HOST: "8"               # concurrent requests per upstream server
-    #   RDAP_PROXY: socks5h://user:pass@10.0.0.1:1080,socks5h://10.0.0.2:1080
-    #   RDAP_CORS: "true"                    # permissive CORS for browser clients
-    #   RUST_LOG: info
-    # Or keep secrets out of this file:
-    # env_file: rdap.env
+      - "127.0.0.1:${HOST_PORT:-8888}:8888"
+    env_file:
+      - path: .env
+        required: false
     read_only: true
     volumes:
-      # $HOME of the rdap user: `rdap --update` configs
       - rdap-data:/home/rdap
     tmpfs:
-      - /tmp:size=16m,mode=1777
+      - /tmp
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 1g

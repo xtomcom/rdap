@@ -13,3 +13,5 @@ compose.yaml
 /rdap
 **/*.rs.bk
 **/mutants.out*/
+.env
+.env.*

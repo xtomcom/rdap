@@ -108,11 +108,10 @@ sudo dnf install rdap
 ### Docker
 
 ```bash
-docker build -t rdap https://github.com/xtomcom/rdap.git
-docker run --rm rdap example.com
+docker run --rm ghcr.io/xtomcom/rdap example.com
 ```
 
-See [Docker / Compose](#docker--compose) for running the API server.
+Images for `linux/amd64` and `linux/arm64` are published to `ghcr.io/xtomcom/rdap` on every release (`latest`, `1.1.0`, `1.1`, `1`). See [Docker / Compose](#docker--compose) for running the API server.
 
 ### macOS
 
@@ -789,28 +788,30 @@ rdap --serve --max-per-host 4
 
 ## Docker / Compose
 
-The `Dockerfile` builds a small Debian-based image that runs the API server as an unprivileged user (UID 10001). Inside the container it listens on `0.0.0.0:8888`.
+`ghcr.io/xtomcom/rdap` (`linux/amd64`, `linux/arm64`) is a small Debian-based image that runs the API server as an unprivileged user (UID 10001). Inside the container it listens on `0.0.0.0:8888`. Tags: `latest`, `X.Y.Z`, `X.Y`, `X`.
 
 ```bash
-docker build -t rdap .
-
 # API server, published on localhost only
-docker run -d --name rdap -p 127.0.0.1:8888:8888 rdap
+docker run -d --name rdap -p 127.0.0.1:8888:8888 ghcr.io/xtomcom/rdap
 curl http://127.0.0.1:8888/query/1.1.1.1
 
 # With a token and a proxy
 docker run -d --name rdap -p 8888:8888 \
-  -e RDAP_API_TOKEN=secret -e RDAP_PROXY=socks5h://10.0.0.1:1080 rdap
+  -e RDAP_API_TOKEN=secret -e RDAP_PROXY=socks5h://10.0.0.1:1080 ghcr.io/xtomcom/rdap
 
 # One-shot queries work too
-docker run --rm rdap 1.1.1.1
-docker run --rm rdap -f json-pretty example.com
+docker run --rm ghcr.io/xtomcom/rdap 1.1.1.1
+docker run --rm ghcr.io/xtomcom/rdap -f json-pretty example.com
+
+# Or build it yourself
+docker build -t rdap .
 ```
 
-`compose.yaml` is a reference setup: it builds the image, publishes `127.0.0.1:8888`, and runs with a read-only root filesystem, no capabilities and `no-new-privileges`. `$HOME` (`/home/rdap`) is a named volume, so configs fetched with `rdap --update` survive restarts. Uncomment the `environment:` entries to configure the server.
+With Compose, settings go in `.env` (see `.env.example`). `compose.yaml` publishes `127.0.0.1:8888` only and runs with a read-only root filesystem, no capabilities and `no-new-privileges`; `$HOME` (`/home/rdap`) is a named volume, so configs fetched with `rdap --update` survive restarts.
 
 ```bash
-docker compose up -d --build
+cp .env.example .env    # optional: token, proxies, cache, ...
+docker compose up -d
 docker compose logs -f
 docker compose run --rm rdap --update   # refresh bootstrap/TLD configs in the volume
 docker compose down
@@ -1293,7 +1294,7 @@ packaging/
 └── arch/            # Arch Linux PKGBUILDs
 
 Dockerfile           # Container image (API server by default)
-compose.yaml         # Reference Compose setup
+compose.yaml         # Reference Compose setup (settings in .env, see .env.example)
 ```
 
 ## RFCs Implemented

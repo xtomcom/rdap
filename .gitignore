@@ -32,3 +32,5 @@ target
 /packaging/arch/rdap-bin/*.gz
 /packaging/arch/rdap-bin/*.zst
 /packaging/arch/rdap-bin/*.deb
+# Local compose settings (may hold the API token / proxy credentials)
+.env

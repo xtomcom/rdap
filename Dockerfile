@@ -28,7 +28,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 FROM debian:${DEBIAN_CODENAME}-slim
 
-ARG VERSION=1.1.0
+# Set by the release workflow from the git tag
+ARG VERSION=dev
 LABEL org.opencontainers.image.title="rdap" \
       org.opencontainers.image.description="Modern RDAP client and local RDAP/JSON API server" \
       org.opencontainers.image.version="${VERSION}" \
