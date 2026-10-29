@@ -203,6 +203,8 @@ fn net_options(cli: &Cli) -> NetOptions {
 async fn run_serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let client =
         RdapClient::with_options(&net_options(&cli))?.with_follow_referral(!cli.no_referral);
+    // -s/--server: send every query to one upstream instead of bootstrap
+    let upstream = cli.server.as_deref().map(url::Url::parse).transpose()?;
     let opts = rdap::server::ServeOptions {
         listen: cli.serve.listen,
         port: cli.serve.port,
@@ -210,6 +212,7 @@ async fn run_serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         cache_ttl: std::time::Duration::from_secs(cli.serve.cache_ttl),
         cors: cli.serve.cors,
         max_batch: cli.serve.max_batch,
+        upstream,
         ..rdap::server::ServeOptions::default()
     };
     rdap::server::serve(opts, std::sync::Arc::new(client))
