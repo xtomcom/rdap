@@ -24,6 +24,7 @@ use colored::Colorize;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -45,8 +46,8 @@ pub struct ServeOptions {
     pub token: Option<String>,
     /// How long query results are cached (zero disables the cache)
     pub cache_ttl: Duration,
-    /// Maximum number of cached query results
-    pub cache_capacity: u64,
+    /// Approximate memory budget of the result cache, in bytes
+    pub cache_bytes: u64,
     /// Send permissive CORS headers
     pub cors: bool,
     /// Maximum number of queries in one `/batch` request
@@ -63,7 +64,7 @@ impl Default for ServeOptions {
             port: DEFAULT_PORT,
             token: None,
             cache_ttl: Duration::from_secs(300),
-            cache_capacity: 10_000,
+            cache_bytes: 256 * 1024 * 1024,
             cors: false,
             max_batch: 100,
             upstream: None,
@@ -77,19 +78,26 @@ pub struct AppState {
     client: Arc<RdapClient>,
     tlds: Option<TldList>,
     cache: ResultCache,
+    /// Upstream lookups running for `/batch` requests, across all clients
+    batch_slots: Arc<Semaphore>,
 }
+
+/// Batch lookups running at once across all `/batch` requests, so one large
+/// batch can't monopolize the per-host upstream slots
+const BATCH_GLOBAL_CONCURRENCY: usize = 32;
 
 impl AppState {
     pub fn new(opts: ServeOptions, client: Arc<RdapClient>) -> Self {
         let tlds = TldList::load()
             .map_err(|e| log::warn!("Failed to load TLD list: {e}"))
             .ok();
-        let cache = ResultCache::new(opts.cache_ttl, opts.cache_capacity);
+        let cache = ResultCache::new(opts.cache_ttl, opts.cache_bytes);
         Self {
             opts,
             client,
             tlds,
             cache,
+            batch_slots: Arc::new(Semaphore::new(BATCH_GLOBAL_CONCURRENCY)),
         }
     }
 }

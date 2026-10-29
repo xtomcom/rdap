@@ -103,6 +103,10 @@ struct ServeArgs {
     #[arg(long, env = "RDAP_CACHE_TTL", default_value = "300")]
     cache_ttl: u64,
 
+    /// Approximate memory budget of the result cache, in MiB
+    #[arg(long, env = "RDAP_CACHE_SIZE", default_value = "256")]
+    cache_size: u64,
+
     /// Send permissive CORS headers (for browser clients)
     #[arg(long, env = "RDAP_CORS")]
     cors: bool,
@@ -195,6 +199,12 @@ fn net_options(cli: &Cli) -> NetOptions {
         max_per_host: cli
             .max_per_host
             .unwrap_or(if cli.serve.enabled { 8 } else { 0 }),
+        // RDAP answers are small; a shared server shouldn't buffer 16 MiB bodies
+        max_body_bytes: if cli.serve.enabled {
+            4 * 1024 * 1024
+        } else {
+            rdap::net::DEFAULT_MAX_BODY_BYTES
+        },
         ..NetOptions::default()
     }
 }
@@ -208,12 +218,17 @@ async fn run_serve(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let opts = rdap::server::ServeOptions {
         listen: cli.serve.listen,
         port: cli.serve.port,
-        token: cli.serve.token.filter(|t| !t.is_empty()),
+        // Surrounding whitespace (e.g. from an env file) is never part of the token
+        token: cli
+            .serve
+            .token
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty()),
         cache_ttl: std::time::Duration::from_secs(cli.serve.cache_ttl),
+        cache_bytes: cli.serve.cache_size.saturating_mul(1024 * 1024),
         cors: cli.serve.cors,
         max_batch: cli.serve.max_batch,
         upstream,
-        ..rdap::server::ServeOptions::default()
     };
     rdap::server::serve(opts, std::sync::Arc::new(client))
         .await

@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use url::Url;
 
 /// Maximum `/batch` body size
@@ -477,28 +478,37 @@ pub async fn batch(State(state): Shared, body: Result<Bytes, BytesRejection>) ->
             })
             .collect();
 
+        // A JoinSet aborts the lookups when this request is dropped (client gone,
+        // request timeout), so abandoned batches stop using upstream capacity
         let semaphore = Arc::new(Semaphore::new(BATCH_CONCURRENCY));
-        let tasks: Vec<_> = unique
-            .iter()
-            .cloned()
-            .map(|request| {
-                let state = Arc::clone(&state);
-                let semaphore = Arc::clone(&semaphore);
-                tokio::spawn(async move {
-                    let _permit = semaphore.acquire_owned().await;
-                    state.lookup(request).await
+        let mut tasks = JoinSet::new();
+        for (i, request) in unique.iter().cloned().enumerate() {
+            let state = Arc::clone(&state);
+            let semaphore = Arc::clone(&semaphore);
+            tasks.spawn(async move {
+                let _permit = semaphore.acquire_owned().await;
+                let _global = Arc::clone(&state.batch_slots).acquire_owned().await;
+                (i, state.lookup(request).await)
+            });
+        }
+        let mut outcomes: Vec<Option<Outcome>> = vec![None; unique.len()];
+        while let Some(joined) = tasks.join_next().await {
+            match joined {
+                Ok((i, outcome)) => outcomes[i] = Some(outcome),
+                Err(e) => log::error!("Batch query task failed: {e}"),
+            }
+        }
+        let outcomes: Vec<Outcome> = outcomes
+            .into_iter()
+            .map(|outcome| {
+                outcome.unwrap_or_else(|| {
+                    Err(ApiError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Query task failed",
+                    ))
                 })
             })
             .collect();
-        let mut outcomes: Vec<Outcome> = Vec::with_capacity(tasks.len());
-        for task in tasks {
-            outcomes.push(task.await.unwrap_or_else(|e| {
-                Err(ApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Query task failed: {e}"),
-                ))
-            }));
-        }
 
         let results = batch
             .queries
