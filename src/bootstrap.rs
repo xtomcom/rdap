@@ -30,8 +30,31 @@ pub struct BootstrapClient {
     http: Arc<HttpPool>,
     config: Config,
     tld_overrides: TldOverrides,
-    /// In-memory registry cache: URL -> (fetched at, registry)
-    registries: Mutex<HashMap<String, (Instant, Arc<BootstrapRegistry>)>>,
+    /// In-memory registry cache by URL
+    registries: Mutex<HashMap<String, CachedRegistry>>,
+    /// Serializes registry fetches so concurrent cold misses fetch once
+    fetch_lock: tokio::sync::Mutex<()>,
+}
+
+/// After a failed fetch, don't retry that URL for this long
+const FAILURE_BACKOFF: Duration = Duration::from_secs(30);
+
+/// Record a failed fetch of `url`; returns the stale copy, if any
+fn mark_failed(
+    registries: &mut HashMap<String, CachedRegistry>,
+    url: &str,
+) -> Option<Arc<BootstrapRegistry>> {
+    let entry = registries.entry(url.to_owned()).or_default();
+    entry.failed_at = Some(Instant::now());
+    entry.registry.as_ref().map(|(_, stale)| Arc::clone(stale))
+}
+
+#[derive(Default)]
+struct CachedRegistry {
+    /// Last good copy and when it was fetched (kept past the TTL as a fallback)
+    registry: Option<(Instant, Arc<BootstrapRegistry>)>,
+    /// When the last fetch failed
+    failed_at: Option<Instant>,
 }
 
 impl BootstrapClient {
@@ -52,6 +75,7 @@ impl BootstrapClient {
             config,
             tld_overrides,
             registries: Mutex::new(HashMap::new()),
+            fetch_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -64,7 +88,9 @@ impl BootstrapClient {
                     .map_err(|e| RdapError::Bootstrap(format!("Invalid IANA RDAP URL: {e}")))?;
                 Ok(vec![url])
             }
-            QueryType::Domain => {
+            // A nameserver object lives at the registry of its own name's TLD
+            // (ns1.google.com -> .com), like a domain
+            QueryType::Domain | QueryType::Nameserver => {
                 // Priority: tlds.json first, then bootstrap
                 if let Some(url) = config::lookup_tld_override(&self.tld_overrides, &request.query)
                 {
@@ -93,14 +119,72 @@ impl BootstrapClient {
         }
     }
 
-    /// Fetch bootstrap registry file from URL, reusing a cached copy for `REGISTRY_TTL`
+    /// Fetch bootstrap registry file from URL, reusing a cached copy for
+    /// `REGISTRY_TTL`. Concurrent misses share one fetch; after a failure the
+    /// URL isn't refetched for `FAILURE_BACKOFF`, and a stale copy is used
+    /// instead of failing when there is one.
     async fn fetch_registry(&self, url: &str) -> Result<Arc<BootstrapRegistry>> {
-        if let Some((fetched_at, registry)) = self.registries.lock().unwrap().get(url)
-            && fetched_at.elapsed() < REGISTRY_TTL
-        {
-            return Ok(Arc::clone(registry));
+        if let Some(answer) = self.cached_registry(url) {
+            return answer;
+        }
+        let _guard = self.fetch_lock.lock().await;
+        // Another task may have fetched (or failed) while we waited
+        if let Some(answer) = self.cached_registry(url) {
+            return answer;
         }
 
+        match self.download_registry(url).await {
+            Ok(registry) => {
+                self.registries.lock().unwrap().insert(
+                    url.to_owned(),
+                    CachedRegistry {
+                        registry: Some((Instant::now(), Arc::clone(&registry))),
+                        failed_at: None,
+                    },
+                );
+                Ok(registry)
+            }
+            Err(e) => {
+                let stale = mark_failed(&mut self.registries.lock().unwrap(), url);
+                if let Some(stale) = stale {
+                    log::warn!(
+                        "Failed to refresh bootstrap registry {url}, using cached copy: {e}"
+                    );
+                    return Ok(stale);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// A cached answer for `url`: fresh copy, or (within the failure backoff)
+    /// the stale copy / an error. `None` means "fetch it".
+    fn cached_registry(&self, url: &str) -> Option<Result<Arc<BootstrapRegistry>>> {
+        let (registry, failed_at) = self
+            .registries
+            .lock()
+            .unwrap()
+            .get(url)
+            .map(|entry| (entry.registry.clone(), entry.failed_at))?;
+        if let Some((fetched_at, registry)) = &registry
+            && fetched_at.elapsed() < REGISTRY_TTL
+        {
+            return Some(Ok(Arc::clone(registry)));
+        }
+        if failed_at.is_some_and(|t| t.elapsed() < FAILURE_BACKOFF) {
+            return Some(registry.as_ref().map_or_else(
+                || {
+                    Err(RdapError::Bootstrap(format!(
+                        "Bootstrap registry {url} is unavailable (fetch failed recently)"
+                    )))
+                },
+                |(_, stale)| Ok(Arc::clone(stale)),
+            ));
+        }
+        None
+    }
+
+    async fn download_registry(&self, url: &str) -> Result<Arc<BootstrapRegistry>> {
         log::debug!("Fetching bootstrap registry: {url}");
 
         let parsed = Url::parse(url)
@@ -114,12 +198,7 @@ impl BootstrapClient {
             )));
         }
 
-        let registry: Arc<BootstrapRegistry> = Arc::new(serde_json::from_slice(&response.body)?);
-        self.registries
-            .lock()
-            .unwrap()
-            .insert(url.to_owned(), (Instant::now(), Arc::clone(&registry)));
-        Ok(registry)
+        Ok(Arc::new(serde_json::from_slice(&response.body)?))
     }
 
     /// Match domain name
