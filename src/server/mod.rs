@@ -17,7 +17,7 @@ use crate::RdapClient;
 use crate::config::TldList;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderValue, Method, header};
 use axum::routing::{get, post};
 use cache::ResultCache;
 use colored::Colorize;
@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use url::Url;
 
@@ -135,7 +135,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(CompressionLayer::new())
         .with_state(state);
     if cors {
-        app = app.layer(CorsLayer::permissive());
+        // Not `permissive()`: its `Allow-Headers: *` doesn't cover Authorization,
+        // so browsers would fail the preflight for token-authenticated requests
+        app = app.layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods([Method::GET, Method::POST])
+                .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+                .max_age(Duration::from_secs(3600)),
+        );
     }
     app.layer(SetResponseHeaderLayer::overriding(
         header::X_CONTENT_TYPE_OPTIONS,

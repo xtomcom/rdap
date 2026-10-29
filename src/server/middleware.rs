@@ -21,6 +21,15 @@ pub async fn require_token(
     next: Next,
 ) -> Response {
     let Some(token) = &state.opts.token else {
+        // No token on a loopback address: only accept loopback Host names, so a
+        // web page can't reach the API through DNS rebinding
+        if state.opts.listen.is_loopback() && !is_loopback_host(&request) {
+            return ApiError::new(
+                StatusCode::FORBIDDEN,
+                "Host not allowed: without a token only localhost / loopback Host names are accepted",
+            )
+            .into_response();
+        }
         return next.run(request).await;
     };
     if request.uri().path() == "/healthz" {
@@ -51,4 +60,26 @@ pub async fn timeout(request: Request, next: Next) -> Response {
         .unwrap_or_else(|_| {
             ApiError::new(StatusCode::GATEWAY_TIMEOUT, "Request timed out").into_response()
         })
+}
+
+/// Whether the request's `Host` header names this machine (`localhost`,
+/// `*.localhost` or a loopback IP); a missing Host (HTTP/1.0) counts as local
+fn is_loopback_host(request: &Request) -> bool {
+    let Some(host) = request.headers().get(header::HOST) else {
+        return true;
+    };
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    // Strip the port: "[::1]:8888", "127.0.0.1:8888", "localhost"
+    let name = host.strip_prefix('[').map_or_else(
+        || host.rsplit_once(':').map_or(host, |(name, _)| name),
+        |rest| rest.split(']').next().unwrap_or_default(),
+    );
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    name == "localhost"
+        || name.ends_with(".localhost")
+        || name
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
