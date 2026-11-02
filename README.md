@@ -442,7 +442,7 @@ curl http://127.0.0.1:8888/healthz
 # {"status":"ok"}
 
 curl http://127.0.0.1:8888/version
-# {"name":"rdap","version":"1.1.0"}
+# {"name":"rdap","version":"1.1.1"}
 ```
 
 ### Errors
@@ -665,7 +665,7 @@ If `--interface` fails with "Operation not permitted", grant `CAP_NET_RAW` as de
 ```toml
 [dependencies]
 # default-features = false excludes the API server and its dependencies
-rdap = { git = "https://github.com/xtomcom/rdap.git", tag = "v1.1.0", default-features = false }
+rdap = { git = "https://github.com/xtomcom/rdap.git", tag = "v1.1.1", default-features = false }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
