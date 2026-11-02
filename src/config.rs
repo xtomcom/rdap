@@ -227,9 +227,11 @@ pub fn lookup_tld_override(overrides: &TldOverrides, domain: &str) -> Option<Url
     let domain = domain.trim_end_matches('.').to_lowercase();
     let parts: Vec<&str> = domain.split('.').collect();
 
-    // Try from most specific to least specific
-    // e.g., for "foo.com.af", try "foo.com.af", "com.af", "af"
-    for i in 0..parts.len() {
+    // Try parent zones from most specific to least specific, e.g. for
+    // "foo.com.af" try "com.af", then "af". The domain itself is skipped: a
+    // zone apex such as "de.com" is registered in its parent (.com), not at
+    // the registry that runs the zone.
+    for i in 1..parts.len() {
         let suffix = parts[i..].join(".");
         if let Some(url_str) = overrides.get(&suffix)
             && let Ok(url) = Url::parse(url_str)
@@ -419,6 +421,15 @@ mod tests {
         // No match
         let url = lookup_tld_override(&overrides, "example.com");
         assert!(url.is_none());
+
+        // A second-level zone's apex belongs to its parent: de.com and wz.org
+        // are .com / .org domains, only names under them use the override
+        assert!(lookup_tld_override(&overrides, "de.com").is_none());
+        assert!(lookup_tld_override(&overrides, "WZ.ORG.").is_none());
+        let url = lookup_tld_override(&overrides, "example.de.com").unwrap();
+        assert!(url.as_str().contains("centralnic"));
+        let url = lookup_tld_override(&overrides, "com.af").unwrap();
+        assert!(url.as_str().contains("coccaregistry"));
     }
 
     #[test]
